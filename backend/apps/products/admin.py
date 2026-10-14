@@ -1,8 +1,12 @@
 from django import forms
-from django.contrib import admin
+from django.contrib import admin, messages
 from django.core.files.storage import default_storage
+from django.shortcuts import redirect
+from django.template.response import TemplateResponse
+from django.urls import path
 from django.utils.html import format_html
 
+from .category_import import CategoryImportError, import_categories
 from .models import Category, Product, SurplusListing, WastageMetric
 from .utils import InvalidImageError, store_product_image, validate_product_image
 
@@ -12,6 +16,49 @@ class CategoryAdmin(admin.ModelAdmin):
     list_display = ["name", "parent_category"]
     list_filter = ["parent_category"]
     search_fields = ["name"]
+    change_list_template = "admin/products/category/change_list.html"
+
+    def get_urls(self):
+        return [
+            path(
+                "import-csv/",
+                self.admin_site.admin_view(self.import_csv_view),
+                name="products_category_import_csv",
+            ),
+            *super().get_urls(),
+        ]
+
+    def import_csv_view(self, request):
+        if not self.has_add_permission(request):
+            return redirect("admin:products_category_changelist")
+
+        form = CategoryCSVImportForm(request.POST or None, request.FILES or None)
+        errors = []
+        if request.method == "POST" and form.is_valid():
+            try:
+                created, skipped = import_categories(form.cleaned_data["csv_file"])
+            except CategoryImportError as e:
+                errors = e.errors
+            else:
+                if created:
+                    noun = "category" if len(created) == 1 else "categories"
+                    messages.success(request, f"Imported {len(created)} {noun}: {', '.join(created)}.")
+                if skipped:
+                    verb = "exists" if len(skipped) == 1 else "exist"
+                    messages.info(request, f"Skipped {len(skipped)} that already {verb}: {', '.join(skipped)}.")
+                return redirect("admin:products_category_changelist")
+
+        return TemplateResponse(request, "admin/products/category/import_csv.html", {
+            **self.admin_site.each_context(request),
+            "opts": self.model._meta,
+            "title": "Import categories from CSV",
+            "form": form,
+            "errors": errors,
+        })
+
+
+class CategoryCSVImportForm(forms.Form):
+    csv_file = forms.FileField(label="CSV file")
 
 
 class ProductAdminForm(forms.ModelForm):
