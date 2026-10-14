@@ -22,5 +22,13 @@ SECURE_HSTS_SECONDS = 31536000
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
 
-# Use Cloudflare R2 for media files in production
-DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+# Uploaded files (product photos, proof of payment). Cloudflare R2 when a bucket
+# is configured; otherwise the server's own disk, which is only good for free-tier
+# testing because Render wipes it on every deploy and restart.
+SERVE_MEDIA_FROM_DISK = not AWS_STORAGE_BUCKET_NAME  # noqa: F405
+if SERVE_MEDIA_FROM_DISK:
+    DEFAULT_FILE_STORAGE = "django.core.files.storage.FileSystemStorage"
+    MEDIA_URL = "/media/"
+    MEDIA_ROOT = BASE_DIR / "media"  # noqa: F405
+else:
+    DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
