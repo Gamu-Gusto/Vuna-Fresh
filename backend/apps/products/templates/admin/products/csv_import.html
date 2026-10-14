@@ -1,10 +1,11 @@
 {% extends "admin/base_site.html" %}
+{% load admin_urls %}
 
 {% block breadcrumbs %}
 <div class="breadcrumbs">
   <a href="{% url 'admin:index' %}">Home</a>
   &rsaquo; <a href="{% url 'admin:app_list' app_label=opts.app_label %}">{{ opts.app_config.verbose_name }}</a>
-  &rsaquo; <a href="{% url 'admin:products_category_changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
+  &rsaquo; <a href="{% url opts|admin_urlname:'changelist' %}">{{ opts.verbose_name_plural|capfirst }}</a>
   &rsaquo; Import from CSV
 </div>
 {% endblock %}
@@ -18,15 +19,9 @@
     </ul>
   {% endif %}
 
-  <p>One category per row, with a header row. <strong>parent</strong> is optional: it names a category
-    that already exists or is elsewhere in the same file. Categories that already exist are skipped.</p>
-<pre style="background:var(--darkened-bg);padding:10px;display:inline-block;">name,parent
-Vegetables,
-Leafy Greens,Vegetables
-Root Vegetables,Vegetables
-Fruit,
-Citrus,Fruit</pre>
-  <p>From Excel or Google Sheets: put <code>name</code> and <code>parent</code> in the first row, then save as CSV.</p>
+  <p>{{ import_help }}</p>
+<pre style="background:var(--darkened-bg);padding:10px;display:inline-block;">{{ import_example }}</pre>
+  <p>From Excel or Google Sheets: put the column names in the first row, then save as "CSV UTF-8".</p>
 
   <form method="post" enctype="multipart/form-data">
     {% csrf_token %}

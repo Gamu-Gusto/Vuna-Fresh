@@ -7,9 +7,10 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import Category, Product, SurplusListing, SurplusListingStatus
+from .models import CatalogueItem, Category, Product, SurplusListing, SurplusListingStatus
 from .permissions import IsAdminUser, IsProductFarmer, IsProductFarmerOrAdmin
 from .serializers import (
+    CatalogueItemSerializer,
     CategorySerializer,
     ProductSerializer,
     ProductWriteSerializer,
@@ -27,6 +28,21 @@ class CategoryViewSet(viewsets.ModelViewSet):
         if self.action in ("list", "retrieve"):
             return [AllowAny()]
         return [IsAdminUser()]
+
+
+class CatalogueItemViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    GET /api/v1/catalogue/ — every active catalogue item, unpaginated (a few
+    hundred rows), for the farmer's product picker. ?search= matches the name.
+    """
+    queryset = CatalogueItem.objects.filter(is_active=True).select_related(
+        "category__parent_category"
+    )
+    serializer_class = CatalogueItemSerializer
+    permission_classes = [AllowAny]
+    pagination_class = None
+    filter_backends = [filters.SearchFilter]
+    search_fields = ["name"]
 
 
 class ProductViewSet(viewsets.ModelViewSet):
@@ -51,9 +67,11 @@ class ProductViewSet(viewsets.ModelViewSet):
             qs = qs.filter(is_available=True)
 
         # Query param filters
+        # A top-level category also matches products in its subcategories
+        # (catalogue products sit in subcategories, e.g. Vegetables > Root vegetables)
         category_id = self.request.query_params.get("category")
         if category_id:
-            qs = qs.filter(category_id=category_id)
+            qs = qs.filter(Q(category_id=category_id) | Q(category__parent_category_id=category_id))
 
         farmer_id = self.request.query_params.get("farmer")
         if farmer_id:

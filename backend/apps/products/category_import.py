@@ -17,47 +17,21 @@ left unchanged.
 The file is all-or-nothing: if any row has a problem, nothing is created and
 every problem is reported with its line number.
 """
-import csv
-import io
-
 from django.db import transaction
 
+from .csv_import import CSVImportError, raise_if_errors, read_rows
 from .models import Category
 
-MAX_FILE_BYTES = 1024 * 1024  # 1 MB is thousands of categories
 NAME_MAX_LENGTH = Category._meta.get_field("name").max_length
 
 
-class CategoryImportError(Exception):
-    def __init__(self, errors):
-        super().__init__("; ".join(errors))
-        self.errors = errors
-
-
 def import_categories(uploaded_file):
-    """Return (created_names, skipped_names). Raises CategoryImportError."""
-    if uploaded_file.size > MAX_FILE_BYTES:
-        raise CategoryImportError(["The file is larger than 1 MB."])
-    try:
-        # utf-8-sig drops the byte-order mark Excel adds when saving as CSV UTF-8
-        text = uploaded_file.read().decode("utf-8-sig")
-    except UnicodeDecodeError:
-        raise CategoryImportError(["The file isn't UTF-8 text. In Excel, save it as \"CSV UTF-8\"."])
-
-    reader = csv.DictReader(io.StringIO(text))
-    headers = {(h or "").strip().lower() for h in reader.fieldnames or []}
-    if "name" not in headers:
-        raise CategoryImportError(['The first row must be a header with a "name" column (and optionally "parent").'])
-
+    """Return (created_names, skipped_names). Raises CSVImportError."""
     errors = []
     rows = []  # (line, name, parent_name)
     seen = {}  # lowercased name -> line it first appeared on
-    for row in reader:
-        line = reader.line_num
-        row = {(k or "").strip().lower(): (v or "").strip() for k, v in row.items() if k}
+    for line, row in read_rows(uploaded_file, required_columns=["name"]):
         name, parent = row.get("name", ""), row.get("parent", "")
-        if not name and not parent:
-            continue  # blank line
         if not name:
             errors.append(f"Line {line}: name is empty.")
             continue
@@ -73,16 +47,11 @@ def import_categories(uploaded_file):
         seen[name.lower()] = line
         rows.append((line, name, parent))
 
-    if not rows and not errors:
-        raise CategoryImportError(["The file has no categories in it."])
-
     existing = {c.name.lower(): c for c in Category.objects.all()}
     for line, name, parent in rows:
         if parent and parent.lower() not in existing and parent.lower() not in seen:
             errors.append(f"Line {line}: parent \"{parent}\" doesn't exist and isn't in this file.")
-    if errors:
-        errors.sort(key=lambda e: int(e.split(":")[0].removeprefix("Line ")))
-        raise CategoryImportError(errors)
+    raise_if_errors(errors)
 
     created, skipped = [], []
     pending = []
@@ -109,7 +78,7 @@ def import_categories(uploaded_file):
                 created.append(name)
             if len(remaining) == len(pending):
                 # Nothing could be created: the parents form a loop (A under B, B under A)
-                raise CategoryImportError([
+                raise CSVImportError([
                     f"Line {line}: \"{name}\" and its parent \"{parent}\" are each other's parents (directly or through other rows)."
                     for line, name, parent in remaining
                 ])

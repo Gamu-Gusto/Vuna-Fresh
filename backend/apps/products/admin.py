@@ -5,63 +5,136 @@ from django.shortcuts import redirect
 from django.template.response import TemplateResponse
 from django.urls import path
 from django.utils.html import format_html
+from django.utils.safestring import mark_safe
 
-from .category_import import CategoryImportError, import_categories
-from .models import Category, Product, SurplusListing, WastageMetric
+from .catalogue_import import import_catalogue
+from .category_import import import_categories
+from .csv_import import CSVImportError
+from .models import CatalogueItem, Category, Product, SurplusListing, WastageMetric
 from .utils import InvalidImageError, store_product_image, validate_product_image
 
 
-@admin.register(Category)
-class CategoryAdmin(admin.ModelAdmin):
-    list_display = ["name", "parent_category"]
-    list_filter = ["parent_category"]
-    search_fields = ["name"]
-    change_list_template = "admin/products/category/change_list.html"
+class CSVImportForm(forms.Form):
+    csv_file = forms.FileField(label="CSV file")
+
+
+def _listed(count, singular, plural, names):
+    return f"{count} {singular if count == 1 else plural}: {', '.join(names)}."
+
+
+class CSVImportAdminMixin:
+    """
+    Adds an "Import from CSV" button and page to a ModelAdmin. Subclasses set
+    import_title, import_help (HTML), import_example, and implement
+    run_import(file), returning [(messages_level, text), ...].
+    """
+    change_list_template = "admin/products/change_list_with_import.html"
 
     def get_urls(self):
+        opts = self.model._meta
         return [
             path(
                 "import-csv/",
                 self.admin_site.admin_view(self.import_csv_view),
-                name="products_category_import_csv",
+                name=f"{opts.app_label}_{opts.model_name}_import_csv",
             ),
             *super().get_urls(),
         ]
 
     def import_csv_view(self, request):
+        opts = self.model._meta
+        changelist = f"admin:{opts.app_label}_{opts.model_name}_changelist"
         if not self.has_add_permission(request):
-            return redirect("admin:products_category_changelist")
+            return redirect(changelist)
 
-        form = CategoryCSVImportForm(request.POST or None, request.FILES or None)
+        form = CSVImportForm(request.POST or None, request.FILES or None)
         errors = []
         if request.method == "POST" and form.is_valid():
             try:
-                created, skipped = import_categories(form.cleaned_data["csv_file"])
-            except CategoryImportError as e:
+                results = self.run_import(form.cleaned_data["csv_file"])
+            except CSVImportError as e:
                 errors = e.errors
             else:
-                if created:
-                    noun = "category" if len(created) == 1 else "categories"
-                    messages.success(request, f"Imported {len(created)} {noun}: {', '.join(created)}.")
-                if skipped:
-                    verb = "exists" if len(skipped) == 1 else "exist"
-                    messages.info(request, f"Skipped {len(skipped)} that already {verb}: {', '.join(skipped)}.")
-                return redirect("admin:products_category_changelist")
+                for level, text in results:
+                    messages.add_message(request, level, text)
+                return redirect(changelist)
 
-        return TemplateResponse(request, "admin/products/category/import_csv.html", {
+        return TemplateResponse(request, "admin/products/csv_import.html", {
             **self.admin_site.each_context(request),
-            "opts": self.model._meta,
-            "title": "Import categories from CSV",
+            "opts": opts,
+            "title": self.import_title,
+            "import_help": mark_safe(self.import_help),  # fixed text set in code, not user input
+            "import_example": self.import_example,
             "form": form,
             "errors": errors,
         })
 
 
-class CategoryCSVImportForm(forms.Form):
-    csv_file = forms.FileField(label="CSV file")
+@admin.register(Category)
+class CategoryAdmin(CSVImportAdminMixin, admin.ModelAdmin):
+    list_display = ["name", "parent_category"]
+    list_filter = ["parent_category"]
+    search_fields = ["name"]
+
+    import_title = "Import categories from CSV"
+    import_help = (
+        "One category per row, with a header row. <strong>parent</strong> is optional: it names a category "
+        "that already exists or is elsewhere in the same file. Categories that already exist are skipped."
+    )
+    import_example = "\n".join([
+        "name,parent",
+        "Vegetables,",
+        "Leafy Greens,Vegetables",
+        "Root Vegetables,Vegetables",
+        "Fruit,",
+        "Citrus,Fruit",
+    ])
+
+    def run_import(self, csv_file):
+        created, skipped = import_categories(csv_file)
+        results = []
+        if created:
+            results.append((messages.SUCCESS, "Imported " + _listed(len(created), "category", "categories", created)))
+        if skipped:
+            results.append((messages.INFO, "Skipped " + _listed(len(skipped), "category that already exists", "categories that already exist", skipped)))
+        return results
+
+
+@admin.register(CatalogueItem)
+class CatalogueItemAdmin(CSVImportAdminMixin, admin.ModelAdmin):
+    list_display = ["code", "name", "category", "default_unit", "is_active"]
+    list_filter = ["is_active", "category__parent_category", "category"]
+    search_fields = ["code", "name"]
+    list_select_related = ["category"]
+    readonly_fields = ["created_at", "updated_at"]
+
+    import_title = "Import product catalogue from CSV"
+    import_help = (
+        "One product per row, with a header row. <strong>Subcategory</strong> is optional. Missing categories "
+        "and subcategories are created. Products whose Product_ID already exists are skipped; edit those here "
+        "in admin. Renaming a product or changing its category here also updates every farmer's listing of it."
+    )
+    import_example = "\n".join([
+        "Product_ID,Category,Subcategory,Product_Name,Typical_Sales_Unit",
+        "SA0001,Vegetables,Root vegetables,Carrot,kg",
+        "SA0029,Vegetables,Leafy greens,Spinach,kg",
+        "SA0109,Fruits,Citrus,Orange,kg",
+    ])
+
+    def run_import(self, csv_file):
+        created, new_categories, skipped = import_catalogue(csv_file)
+        results = []
+        if created:
+            results.append((messages.SUCCESS, f"Imported {len(created)} product{'' if len(created) == 1 else 's'} into the catalogue."))
+        if new_categories:
+            results.append((messages.SUCCESS, "Created " + _listed(len(new_categories), "category", "categories", new_categories)))
+        if skipped:
+            results.append((messages.INFO, "Skipped " + _listed(len(skipped), "product whose Product_ID already exists", "products whose Product_ID already exists", skipped)))
+        return results
 
 
 class ProductAdminForm(forms.ModelForm):
+
     # Plain FileField, not ImageField — ImageField needs Pillow to validate the
     # file, which isn't a project dependency. validate_product_image() below
     # checks content-type and size instead.
@@ -75,6 +148,12 @@ class ProductAdminForm(forms.ModelForm):
         model = Product
         fields = "__all__"
         widgets = {"image_url": forms.TextInput(attrs={"readonly": "readonly"})}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Name and category are copied from the catalogue item (see Product.save).
+        # The model allows null only for listings that predate the catalogue.
+        self.fields["catalogue_item"].required = True
 
     def clean_image_upload(self):
         image_file = self.cleaned_data.get("image_upload")
@@ -92,9 +171,10 @@ class ProductAdmin(admin.ModelAdmin):
     list_display = ["name", "farmer", "category", "price", "unit", "stock_quantity", "is_available"]
     list_filter = ["is_available", "category"]
     search_fields = ["name", "farmer__farm_name"]
-    readonly_fields = ["created_at", "updated_at", "image_preview"]
+    autocomplete_fields = ["catalogue_item"]
+    readonly_fields = ["name", "category", "created_at", "updated_at", "image_preview"]
     fields = [
-        "farmer", "category", "name", "description",
+        "farmer", "catalogue_item", "name", "category", "description",
         "price", "unit", "stock_quantity", "low_stock_threshold", "is_available",
         "image_preview", "image_upload", "image_url",
         "created_at", "updated_at",

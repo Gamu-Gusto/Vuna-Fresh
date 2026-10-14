@@ -1,6 +1,6 @@
 from django.utils import timezone
 from rest_framework import serializers
-from .models import Category, Product, SurplusListing
+from .models import CatalogueItem, Category, Product, SurplusListing
 
 
 class CategorySerializer(serializers.ModelSerializer):
@@ -18,6 +18,18 @@ class CategorySerializer(serializers.ModelSerializer):
         return CategorySerializer(children, many=True, context=self.context).data
 
 
+class CatalogueItemSerializer(serializers.ModelSerializer):
+    category_name = serializers.CharField(source="category.name", read_only=True)
+    parent_category_name = serializers.CharField(
+        source="category.parent_category.name", default=None, read_only=True
+    )
+
+    class Meta:
+        model = CatalogueItem
+        fields = ["id", "code", "name", "category", "category_name", "parent_category_name", "default_unit"]
+        read_only_fields = fields
+
+
 class ProductSerializer(serializers.ModelSerializer):
     farmer_id = serializers.IntegerField(source="farmer.id", read_only=True)
     farm_name = serializers.CharField(source="farmer.farm_name", read_only=True)
@@ -32,6 +44,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "id",
             "farmer_id",
             "farm_name",
+            "catalogue_item",
             "category",
             "category_name",
             "name",
@@ -55,13 +68,16 @@ class ProductSerializer(serializers.ModelSerializer):
 
 
 class ProductWriteSerializer(serializers.ModelSerializer):
-    """Used for create/update — farmer is set from the request, not the payload."""
+    """
+    Used for create/update — farmer is set from the request, not the payload.
+    Name and category come from the chosen catalogue item (see Product.save).
+    """
+    catalogue_item = serializers.PrimaryKeyRelatedField(queryset=CatalogueItem.objects.all())
 
     class Meta:
         model = Product
         fields = [
-            "category",
-            "name",
+            "catalogue_item",
             "description",
             "price",
             "unit",
@@ -70,6 +86,19 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             "is_available",
             "image_url",
         ]
+
+    def validate_catalogue_item(self, value):
+        current = self.instance.catalogue_item if self.instance else None
+        if current == value:
+            return value
+        if current is not None:
+            # Reviews and order history belong to what was actually sold
+            raise serializers.ValidationError(
+                "A listing's product can't be changed. Add a new product instead."
+            )
+        if not value.is_active:
+            raise serializers.ValidationError("This product is no longer in the catalogue.")
+        return value
 
     def validate_price(self, value):
         if value <= 0:

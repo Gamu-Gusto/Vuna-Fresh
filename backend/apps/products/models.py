@@ -25,6 +25,46 @@ class Category(models.Model):
         return self.name
 
 
+class CatalogueItem(models.Model):
+    """
+    The master list of products farmers can sell, managed by admins (CSV import
+    in Django admin). A farmer's Product is always one of these, so buyers see
+    one consistent name and category however many farmers sell it.
+    """
+    code = models.CharField(max_length=20, unique=True, help_text="e.g. SA0001")
+    name = models.CharField(max_length=255, unique=True)
+    category = models.ForeignKey(
+        Category,
+        on_delete=models.PROTECT,
+        related_name="catalogue_items",
+    )
+    default_unit = models.CharField(
+        max_length=50,
+        help_text="Pre-filled when a farmer adds this product; the farmer can change it.",
+    )
+    is_active = models.BooleanField(
+        default=True,
+        help_text="Untick to stop farmers adding new listings of this product. Existing listings are unaffected.",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "catalogue_items"
+        ordering = ["name"]
+
+    def __str__(self):
+        return self.name
+
+    def save(self, *args, **kwargs):
+        super().save(*args, **kwargs)
+        # Farmers' listings show the catalogue's name and category, so a rename
+        # or recategorisation here applies to every listing of this product.
+        self.products.exclude(name=self.name, category_id=self.category_id).update(
+            name=self.name, category_id=self.category_id
+        )
+
+
 class Product(models.Model):
     farmer = models.ForeignKey(
         "users.FarmerProfile",
@@ -36,6 +76,17 @@ class Product(models.Model):
         on_delete=models.PROTECT,
         related_name="products",
     )
+    # Null only for listings created before the catalogue existed; the API
+    # requires it for every new listing.
+    catalogue_item = models.ForeignKey(
+        CatalogueItem,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name="products",
+    )
+    # Copied from catalogue_item on save; kept on the row so listings, carts
+    # and orders read them without a join.
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     price = models.DecimalField(max_digits=10, decimal_places=2)
@@ -53,6 +104,12 @@ class Product(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.farmer.farm_name})"
+
+    def save(self, *args, **kwargs):
+        if self.catalogue_item_id:
+            self.name = self.catalogue_item.name
+            self.category_id = self.catalogue_item.category_id
+        super().save(*args, **kwargs)
 
     @property
     def is_low_stock(self):
