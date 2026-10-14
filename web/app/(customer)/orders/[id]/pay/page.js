@@ -98,7 +98,7 @@ export default function PayOrderPage() {
       )}
       {status === 'proof_submitted' && (
         <Notice tone="blue">
-          We&apos;ve received your proof of payment and will confirm it shortly. You&apos;ll get a notification once it&apos;s verified.
+          We&apos;ve received your proof of payment. Your order goes to the farmers as soon as the money has cleared in our bank account. EFTs from other banks can take a day or two. You&apos;ll get a notification once it&apos;s confirmed.
         </Notice>
       )}
 

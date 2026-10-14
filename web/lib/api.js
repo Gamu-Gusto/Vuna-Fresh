@@ -137,11 +137,13 @@ async function request(path, options = {}, _isRetry = false) {
 
   if (!res.ok) {
     let errorMessage = `Request failed (${res.status})`;
+    let errorDetail = null;
     try {
       const body = await res.json();
       errorMessage = body?.error?.message || body?.detail || errorMessage;
+      errorDetail = body?.error?.detail ?? null;
     } catch {}
-    throw new ApiError(res.status, errorMessage);
+    throw new ApiError(res.status, errorMessage, errorDetail);
   }
 
   // 204 No Content
@@ -151,9 +153,11 @@ async function request(path, options = {}, _isRetry = false) {
 }
 
 export class ApiError extends Error {
-  constructor(status, message) {
+  // detail: per-field validation messages from DRF, e.g. { amount_received: ["..."] }
+  constructor(status, message, detail = null) {
     super(message);
     this.status = status;
+    this.detail = detail;
   }
 }
 
