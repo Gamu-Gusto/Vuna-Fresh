@@ -9,20 +9,21 @@ import { ProductFormFields } from '@/components/FarmerProductForm';
 export default function EditProductPage() {
   const { id } = useParams();
   const router = useRouter();
-  const [categories, setCategories] = useState([]);
+  const [catalogue, setCatalogue] = useState([]);
   const [form, setForm] = useState(null);
+  const [lockedItem, setLockedItem] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     async function load() {
       try {
-        const [product, cats] = await Promise.all([
+        const [product, items] = await Promise.all([
           apiClient.get(`/products/${id}/`),
-          apiClient.get('/products/categories/?page_size=100'),
+          apiClient.get('/catalogue/'),
         ]);
         setForm({
-          name: product.name,
+          catalogue_item: product.catalogue_item ?? '',
           description: product.description || '',
           price: product.price,
           unit: product.unit,
@@ -30,9 +31,15 @@ export default function EditProductPage() {
           low_stock_threshold: product.low_stock_threshold,
           is_available: product.is_available,
           image_url: product.image_url || '',
-          category: product.category,
         });
-        setCategories(cats.results ?? []);
+        setCatalogue(items);
+        if (product.catalogue_item) {
+          // The catalogue only lists active items, so describe the listing's
+          // own product from the listing itself.
+          setLockedItem(items.find(i => i.id === product.catalogue_item) ?? {
+            name: product.name, category_name: product.category_name,
+          });
+        }
       } catch (err) {
         setError(err.message);
       }
@@ -55,7 +62,8 @@ export default function EditProductPage() {
         price: parseFloat(form.price),
         stock_quantity: parseInt(form.stock_quantity, 10),
         low_stock_threshold: parseInt(form.low_stock_threshold, 10),
-        category: parseInt(form.category, 10),
+        // Only listings created before the catalogue existed can set it here
+        ...(lockedItem ? {} : { catalogue_item: parseInt(form.catalogue_item, 10) }),
       });
       router.push('/farmer/inventory');
     } catch (err) {
@@ -84,7 +92,7 @@ export default function EditProductPage() {
       )}
 
       <form onSubmit={handleSubmit} className="bg-white rounded border border-hairline p-6 space-y-5">
-        <ProductFormFields form={form} onChange={handleChange} categories={categories} />
+        <ProductFormFields form={form} onChange={handleChange} catalogue={catalogue} lockedItem={lockedItem} />
 
         <div className="flex gap-3 pt-2 border-t border-hairline">
           <button

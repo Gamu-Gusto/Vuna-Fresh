@@ -7,22 +7,20 @@ import Link from 'next/link';
 import { ProductFormFields } from '@/components/FarmerProductForm';
 
 const EMPTY_FORM = {
-  name: '', description: '', price: '', unit: '',
+  catalogue_item: '', description: '', price: '', unit: '',
   stock_quantity: '', low_stock_threshold: '10',
-  is_available: true, image_url: '', category: '',
+  is_available: true, image_url: '',
 };
 
 export default function NewProductPage() {
   const router = useRouter();
-  const [categories, setCategories] = useState([]);
+  const [catalogue, setCatalogue] = useState([]);
   const [form, setForm] = useState(EMPTY_FORM);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    apiClient.get('/products/categories/?page_size=100').then(data => {
-      setCategories(data.results ?? []);
-    });
+    apiClient.get('/catalogue/').then(setCatalogue).catch(err => setError(err.message));
   }, []);
 
   function handleChange(e) {
@@ -40,7 +38,7 @@ export default function NewProductPage() {
         price: parseFloat(form.price),
         stock_quantity: parseInt(form.stock_quantity, 10),
         low_stock_threshold: parseInt(form.low_stock_threshold, 10),
-        category: parseInt(form.category, 10),
+        catalogue_item: parseInt(form.catalogue_item, 10),
       });
       router.push('/farmer/inventory');
     } catch (err) {
@@ -65,7 +63,7 @@ export default function NewProductPage() {
       )}
 
       <form onSubmit={handleSubmit} className="bg-white rounded border border-hairline p-6 space-y-5">
-        <ProductFormFields form={form} onChange={handleChange} categories={categories} />
+        <ProductFormFields form={form} onChange={handleChange} catalogue={catalogue} />
 
         <div className="flex gap-3 pt-2 border-t border-hairline">
           <button

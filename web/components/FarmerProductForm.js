@@ -1,9 +1,15 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useMemo } from 'react';
+import Link from 'next/link';
 import { uploadFile } from '@/lib/api';
 
-export function ProductFormFields({ form, onChange, categories }) {
+/**
+ * `catalogue` is the list from GET /catalogue/. When `lockedItem` is given
+ * (editing a listing that already has a catalogue product), the product is
+ * shown read-only: a listing's product can't be changed after it's created.
+ */
+export function ProductFormFields({ form, onChange, catalogue, lockedItem }) {
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState('');
   const fileInputRef = useRef(null);
@@ -31,7 +37,29 @@ export function ProductFormFields({ form, onChange, categories }) {
 
   return (
     <>
-      <Field label="Product name" name="name" value={form.name} onChange={onChange} required />
+      {lockedItem ? (
+        <div>
+          <span className="block text-sm font-medium text-gray-700 mb-1">Product</span>
+          <p className="text-sm text-gray-800">
+            {lockedItem.name}{' '}
+            <span className="text-gray-400">· {categoryPath(lockedItem)}</span>
+          </p>
+          <p className="mt-1 text-xs text-gray-400">To sell a different product, add a new one.</p>
+        </div>
+      ) : (
+        <CataloguePicker
+          catalogue={catalogue}
+          value={form.catalogue_item}
+          onSelect={item => {
+            onChange({ target: { name: 'catalogue_item', value: String(item.id) } });
+            // Pre-fill the unit unless the farmer has already typed their own
+            const previous = catalogue.find(c => String(c.id) === String(form.catalogue_item));
+            if (!form.unit || form.unit === previous?.default_unit) {
+              onChange({ target: { name: 'unit', value: item.default_unit } });
+            }
+          }}
+        />
+      )}
 
       <div>
         <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -44,25 +72,9 @@ export function ProductFormFields({ form, onChange, categories }) {
         />
       </div>
 
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-        <select
-          name="category"
-          value={form.category}
-          onChange={onChange}
-          required
-          className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent"
-        >
-          <option value="">Select a category…</option>
-          {categories.map(c => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-      </div>
-
       <div className="grid grid-cols-2 gap-4">
         <Field label="Price (R)" name="price" type="number" step="0.01" min="0" value={form.price} onChange={onChange} required />
-        <Field label="Unit" name="unit" placeholder="kg, each, bunch…" value={form.unit} onChange={onChange} required />
+        <Field label="Unit (price is per unit)" name="unit" placeholder="kg, 5 kg bag, 200 g pack…" value={form.unit} onChange={onChange} required />
       </div>
 
       <div className="grid grid-cols-2 gap-4">
@@ -145,6 +157,73 @@ export function ProductFormFields({ form, onChange, categories }) {
         <span className="text-sm font-medium text-gray-700">List as available for purchase</span>
       </label>
     </>
+  );
+}
+
+function categoryPath(item) {
+  return item.parent_category_name
+    ? `${item.parent_category_name} › ${item.category_name}`
+    : item.category_name;
+}
+
+function CataloguePicker({ catalogue, value, onSelect }) {
+  const [query, setQuery] = useState('');
+  const selected = catalogue.find(c => String(c.id) === String(value));
+
+  // Group matches under "Category › Subcategory", in that order
+  const groups = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const byGroup = new Map();
+    for (const item of catalogue) {
+      if (q && !item.name.toLowerCase().includes(q) && !categoryPath(item).toLowerCase().includes(q)) continue;
+      const group = categoryPath(item);
+      if (!byGroup.has(group)) byGroup.set(group, []);
+      byGroup.get(group).push(item);
+    }
+    return [...byGroup.entries()].sort(([a], [b]) => a.localeCompare(b));
+  }, [catalogue, query]);
+
+  return (
+    <div>
+      <label htmlFor="catalogue-search" className="block text-sm font-medium text-gray-700 mb-1">Product</label>
+      <input
+        id="catalogue-search"
+        type="search"
+        value={query}
+        onChange={e => setQuery(e.target.value)}
+        placeholder="Search, e.g. spinach, citrus, eggs…"
+        className="w-full border border-gray-300 rounded-t-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent"
+      />
+      <select
+        name="catalogue_item"
+        aria-label="Product"
+        size={8}
+        value={value}
+        onChange={e => {
+          const item = catalogue.find(c => String(c.id) === e.target.value);
+          if (item) onSelect(item);
+        }}
+        required
+        className="w-full border border-t-0 border-gray-300 rounded-b-lg px-1 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent"
+      >
+        {groups.map(([group, items]) => (
+          <optgroup key={group} label={group}>
+            {items.map(item => (
+              <option key={item.id} value={item.id}>{item.name}</option>
+            ))}
+          </optgroup>
+        ))}
+      </select>
+      <p className="mt-1 text-xs text-gray-500">
+        {selected
+          ? <>Selected: <span className="font-medium text-gray-800">{selected.name}</span> · {categoryPath(selected)}</>
+          : catalogue.length && !groups.length ? 'No products match your search.' : 'Pick the product you are selling.'}
+      </p>
+      <p className="mt-1 text-xs text-gray-400">
+        Can&apos;t find your product?{' '}
+        <Link href="/farmer/support" className="text-brand-green hover:underline">Ask us to add it</Link>.
+      </p>
+    </div>
   );
 }
 
