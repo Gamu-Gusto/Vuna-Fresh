@@ -1,4 +1,5 @@
 from django.core.files.storage import default_storage
+from django.db import transaction as db_transaction
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
@@ -133,7 +134,11 @@ class PayFastITNView(APIView):
             return Response(status=status.HTTP_200_OK)
 
         if result.success:
+            already_paid = txn.status == TransactionStatus.COMPLETED  # PayFast retries ITNs
             mark_payment_completed(txn, provider_reference=result.provider_reference)
+            if txn.order and not already_paid:
+                from apps.orders.notifications import notify_order_paid
+                notify_order_paid(txn.order)
         else:
             mark_payment_failed(txn)
 
@@ -207,33 +212,58 @@ class DirectDepositProofViewSet(
 
     @action(detail=True, methods=["post"], url_path="review")
     def review(self, request, pk=None):
-        proof = self.get_object()
-        if proof.status != DirectDepositProofStatus.PENDING_REVIEW:
-            return Response(
-                {"error": {"code": "bad_request", "message": "This proof has already been reviewed."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        """
+        approve: {action, funds_cleared: true, amount_received, received_on,
+                  bank_statement_reference, notes?} — only after checking the
+                  money has cleared in the bank account (see DirectDepositReviewSerializer).
+        reject:  {action, notes}
+        """
+        with db_transaction.atomic():
+            # Lock the row so two admins reviewing at once can't both act on it
+            proof = DirectDepositProof.objects.select_for_update().select_related(
+                "transaction"
+            ).get(pk=self.get_object().pk)
+            if proof.status != DirectDepositProofStatus.PENDING_REVIEW:
+                return Response(
+                    {"error": {"code": "bad_request", "message": "This proof has already been reviewed."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if request.user.id in (proof.uploaded_by_id, proof.transaction.user_id):
+                return Response(
+                    {"error": {"code": "forbidden", "message": "Another admin must review a payment you made yourself."}},
+                    status=status.HTTP_403_FORBIDDEN,
+                )
 
-        serializer = DirectDepositReviewSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        notes = serializer.validated_data.get("notes", "")
+            serializer = DirectDepositReviewSerializer(data=request.data, context={"proof": proof})
+            serializer.is_valid(raise_exception=True)
+            data = serializer.validated_data
 
-        proof.reviewed_by = request.user
-        proof.reviewed_at = timezone.now()
-        proof.notes = notes
+            proof.reviewed_by = request.user
+            proof.reviewed_at = timezone.now()
+            proof.notes = data.get("notes", "")
+            approved = data["action"] == "approve"
 
-        if serializer.validated_data["action"] == "approve":
-            proof.status = DirectDepositProofStatus.VERIFIED
-            proof.save(update_fields=["reviewed_by", "reviewed_at", "notes", "status"])
-            mark_payment_completed(proof.transaction)
+            if approved:
+                proof.status = DirectDepositProofStatus.VERIFIED
+                proof.amount_received = data["amount_received"]
+                proof.received_on = data["received_on"]
+                proof.bank_statement_reference = data["bank_statement_reference"]
+                proof.save(update_fields=[
+                    "reviewed_by", "reviewed_at", "notes", "status",
+                    "amount_received", "received_on", "bank_statement_reference",
+                ])
+                mark_payment_completed(proof.transaction)
+            else:
+                proof.status = DirectDepositProofStatus.REJECTED
+                proof.save(update_fields=["reviewed_by", "reviewed_at", "notes", "status"])
+                mark_payment_failed(proof.transaction)
+
+        if approved:
             self._notify_approval(proof)
             if proof.transaction.order:
                 from apps.orders.notifications import notify_order_paid
                 notify_order_paid(proof.transaction.order)
         else:
-            proof.status = DirectDepositProofStatus.REJECTED
-            proof.save(update_fields=["reviewed_by", "reviewed_at", "notes", "status"])
-            mark_payment_failed(proof.transaction)
             self._notify_rejection(proof)
 
         return Response(DirectDepositProofSerializer(proof).data)

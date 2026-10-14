@@ -17,28 +17,47 @@ class PaymentMethodAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at"]
 
 
-class DirectDepositProofInline(admin.TabularInline):
+class ViewOnlyAdminMixin:
+    """
+    Payment records can be looked at here but not created or changed: marking
+    money as received must go through the payment review (admin Payments page),
+    which checks the funds cleared, releases the order and creates payouts.
+    """
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+
+class DirectDepositProofInline(ViewOnlyAdminMixin, admin.TabularInline):
     model = DirectDepositProof
     extra = 0
-    readonly_fields = ["uploaded_by", "file_url", "bank_reference_number", "status", "reviewed_by", "reviewed_at", "notes", "created_at"]
-    can_delete = False
+    fields = readonly_fields = [
+        "uploaded_by", "file_url", "bank_reference_number", "status", "reviewed_by", "reviewed_at",
+        "amount_received", "received_on", "bank_statement_reference", "notes", "created_at",
+    ]
 
 
 @admin.register(Transaction)
-class TransactionAdmin(admin.ModelAdmin):
+class TransactionAdmin(ViewOnlyAdminMixin, admin.ModelAdmin):
     list_display = ["id", "user", "order", "type", "provider", "amount", "status", "created_at"]
     list_filter = ["provider", "type", "status"]
     search_fields = ["user__email", "provider_reference", "order__id"]
-    readonly_fields = ["created_at"]
     inlines = [DirectDepositProofInline]
 
 
 @admin.register(DirectDepositProof)
-class DirectDepositProofAdmin(admin.ModelAdmin):
-    list_display = ["id", "transaction", "uploaded_by", "bank_reference_number", "status", "reviewed_by", "created_at"]
+class DirectDepositProofAdmin(ViewOnlyAdminMixin, admin.ModelAdmin):
+    list_display = [
+        "id", "transaction", "uploaded_by", "bank_reference_number", "status",
+        "amount_received", "received_on", "reviewed_by", "created_at",
+    ]
     list_filter = ["status"]
-    search_fields = ["uploaded_by__email", "bank_reference_number"]
-    readonly_fields = ["created_at"]
+    search_fields = ["uploaded_by__email", "bank_reference_number", "bank_statement_reference"]
 
 
 @admin.register(CommissionSettings)

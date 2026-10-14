@@ -1,4 +1,5 @@
 from django.conf import settings
+from django.utils import timezone
 from rest_framework import serializers
 
 from apps.orders.models import OrderStatus
@@ -83,9 +84,13 @@ class DirectDepositProofSerializer(serializers.ModelSerializer):
         fields = [
             "id", "transaction", "order_id", "amount", "expected_reference", "uploaded_by_email",
             "file_url", "bank_reference_number",
-            "status", "reviewed_by", "reviewed_at", "notes", "created_at",
+            "status", "reviewed_by", "reviewed_at", "notes",
+            "amount_received", "received_on", "bank_statement_reference", "created_at",
         ]
-        read_only_fields = ["id", "status", "reviewed_by", "reviewed_at", "created_at"]
+        read_only_fields = [
+            "id", "status", "reviewed_by", "reviewed_at",
+            "amount_received", "received_on", "bank_statement_reference", "created_at",
+        ]
 
     def validate_transaction(self, value):
         request = self.context["request"]
@@ -105,12 +110,62 @@ class DirectDepositProofSerializer(serializers.ModelSerializer):
 
 
 class DirectDepositReviewSerializer(serializers.Serializer):
+    """
+    Approving means the admin has seen the money arrive in Vuna Fresh's bank
+    account, not just the buyer's proof. They record what the bank statement
+    shows, and it must cover the amount due. context["proof"] is the proof.
+    """
     action = serializers.ChoiceField(choices=["approve", "reject"])
     notes = serializers.CharField(required=False, allow_blank=True, default="")
+    funds_cleared = serializers.BooleanField(required=False, default=False)
+    amount_received = serializers.DecimalField(max_digits=12, decimal_places=2, required=False)
+    received_on = serializers.DateField(required=False)
+    bank_statement_reference = serializers.CharField(max_length=100, required=False, allow_blank=True, default="")
 
     def validate(self, attrs):
-        if attrs["action"] == "reject" and not attrs.get("notes", "").strip():
-            raise serializers.ValidationError({"notes": "A reason is required when rejecting."})
+        if attrs["action"] == "reject":
+            if not attrs.get("notes", "").strip():
+                raise serializers.ValidationError({"notes": "A reason is required when rejecting."})
+            return attrs
+
+        errors = {}
+        if not attrs["funds_cleared"]:
+            errors["funds_cleared"] = (
+                "Confirm you have checked the Vuna Fresh bank account and the funds have cleared. "
+                "An uploaded proof of payment is not enough."
+            )
+        if attrs.get("amount_received") is None:
+            errors["amount_received"] = "Enter the amount shown on the bank statement."
+        if attrs.get("received_on") is None:
+            errors["received_on"] = "Enter the date the funds arrived, from the bank statement."
+        elif attrs["received_on"] > timezone.localdate():
+            errors["received_on"] = "The date funds arrived can't be in the future."
+        attrs["bank_statement_reference"] = attrs["bank_statement_reference"].strip()
+        if not attrs["bank_statement_reference"]:
+            errors["bank_statement_reference"] = "Enter the reference shown on the bank statement."
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        proof = self.context["proof"]
+        due = proof.transaction.amount
+        if attrs["amount_received"] < due:
+            raise serializers.ValidationError({"amount_received": (
+                f"R{attrs['amount_received']} received is less than the R{due} due. Don't approve a "
+                f"short payment: reject it with a reason, or wait for the balance to clear."
+            )})
+
+        # The same bank deposit can't pay for two orders (e.g. one proof uploaded twice)
+        reused = DirectDepositProof.objects.filter(
+            status=DirectDepositProofStatus.VERIFIED,
+            bank_statement_reference__iexact=attrs["bank_statement_reference"],
+            received_on=attrs["received_on"],
+            amount_received=attrs["amount_received"],
+        ).exclude(pk=proof.pk).select_related("transaction").first()
+        if reused:
+            raise serializers.ValidationError({"bank_statement_reference": (
+                f"This deposit (same reference, date and amount) already paid for order "
+                f"#{reused.transaction.order_id}. Check the bank statement for a separate deposit."
+            )})
         return attrs
 
 

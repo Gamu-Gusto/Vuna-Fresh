@@ -2,7 +2,7 @@ from django.conf import settings
 from django.db import models
 from rest_framework.exceptions import ValidationError
 
-from apps.buyers.models import CreditTerms
+from apps.buyers.models import CREDIT_TERM_DUE_DAYS, CreditTerms
 
 
 class CartStatus(models.TextChoices):
@@ -73,6 +73,20 @@ class CartItem(models.Model):
         return f"CartItem({self.product.name} x{self.quantity})"
 
 
+class OrderQuerySet(models.QuerySet):
+    def released(self):
+        """
+        Orders farmers may see and prepare: credit-terms orders (invoiced on
+        delivery), or prepaid orders whose payment has been confirmed. An EFT
+        order is never released on an uploaded proof alone: its payment only
+        completes once an admin confirms the funds cleared.
+        """
+        return self.filter(
+            models.Q(payment_terms__in=CREDIT_TERM_DUE_DAYS)
+            | models.Q(transactions__type="payment", transactions__status="completed")
+        ).distinct()
+
+
 class Order(models.Model):
     buyer = models.ForeignKey(
         "users.BuyerProfile",
@@ -103,12 +117,21 @@ class Order(models.Model):
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
+    objects = OrderQuerySet.as_manager()
+
     class Meta:
         db_table = "orders"
         ordering = ["-created_at"]
 
     def __str__(self):
         return f"Order({self.pk}, {self.buyer.user.email}, {self.status})"
+
+    @property
+    def is_released(self):
+        """See OrderQuerySet.released."""
+        return self.payment_terms in CREDIT_TERM_DUE_DAYS or self.transactions.filter(
+            type="payment", status="completed"
+        ).exists()
 
     def transition_status(self, new_status, changed_by):
         """
@@ -121,6 +144,11 @@ class Order(models.Model):
         if new_status not in VALID_TRANSITIONS.get(current, set()):
             raise ValidationError(
                 f"Cannot transition from '{current}' to '{new_status}'."
+            )
+
+        if new_status == OrderStatus.PREPARING and not self.is_released:
+            raise ValidationError(
+                "This order can't be prepared until its payment has been confirmed as received."
             )
 
         allowed_roles = STATUS_ROLE_PERMISSIONS.get(new_status, set())

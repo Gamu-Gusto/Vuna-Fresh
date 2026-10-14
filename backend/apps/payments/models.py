@@ -104,7 +104,7 @@ class Transaction(models.Model):
 
 class DirectDepositProofStatus(models.TextChoices):
     PENDING_REVIEW = "pending_review", "Pending Review"
-    VERIFIED = "verified", "Verified"
+    VERIFIED = "verified", "Verified"  # funds confirmed cleared in the bank account
     REJECTED = "rejected", "Rejected"
 
 
@@ -136,6 +136,12 @@ class DirectDepositProof(models.Model):
     )
     reviewed_at = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
+    # What the reviewing admin saw on Vuna Fresh's own bank statement when they
+    # confirmed the funds had cleared. An uploaded proof alone is never enough
+    # to mark an order paid (a proof can be forged, or the payment reversed).
+    amount_received = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    received_on = models.DateField(null=True, blank=True)
+    bank_statement_reference = models.CharField(max_length=100, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

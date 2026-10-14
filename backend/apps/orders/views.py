@@ -137,7 +137,8 @@ class OrderViewSet(
             accessible_ids = [p.id for p in get_accessible_buyer_profiles(user)]
             return qs.filter(buyer_id__in=accessible_ids)
         if user.role == "farmer":
-            return qs.filter(items__farmer=user.farmer_profile).distinct()
+            # Farmers only see an order once it's released (paid, or on credit)
+            return qs.filter(items__farmer=user.farmer_profile).released().distinct()
         if user.role == "driver":
             return qs.filter(driver=user.driver_profile)
         # admin sees all

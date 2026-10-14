@@ -6,6 +6,8 @@ Covers:
 - Checkout: OrderItems created with correct snapshots and farmer FK, cart marked converted
 - Order list visibility: farmer A cannot see orders that only contain farmer B's products
 - Status transitions: history row created, invalid transitions rejected, role enforcement
+- Release: unpaid prepaid orders are hidden from farmers and can't be prepared;
+  credit-terms orders are released straight away
 """
 from decimal import Decimal
 
@@ -72,6 +74,15 @@ def make_product(farmer_profile, name="Tomatoes", price="10.00", stock=100):
         unit="kg",
         stock_quantity=stock,
         is_available=True,
+    )
+
+
+def mark_paid(order):
+    """Helper: record a confirmed (completed) payment, which releases the order to farmers."""
+    from apps.payments.models import Transaction
+    return Transaction.objects.create(
+        order=order, user=order.buyer.user, provider="direct_deposit",
+        type="payment", amount=order.total, status="completed",
     )
 
 
@@ -335,6 +346,8 @@ class OrderVisibilityTests(TestCase):
             quantity=1,
             price_at_purchase=Decimal("20.00"),
         )
+        mark_paid(self.order_a)
+        mark_paid(self.order_b)
 
     def _get_orders(self, user):
         client = APIClient()
@@ -418,6 +431,7 @@ class OrderStatusTransitionTests(TestCase):
             quantity=1,
             price_at_purchase=Decimal("15.00"),
         )
+        mark_paid(self.order)
 
     def _update_status(self, user, new_status):
         client = APIClient()
@@ -511,3 +525,56 @@ class OrderStatusTransitionTests(TestCase):
         _, other_farmer_profile = make_farmer("other_farmer@test.com", farm_name="Other Farm")
         with self.assertRaises(ValidationError):
             self.order.transition_status(OrderStatus.PREPARING, changed_by=other_farmer_profile.user)
+
+
+class OrderReleaseTests(TestCase):
+    """A prepaid order reaches farmers only once its payment is confirmed."""
+
+    def setUp(self):
+        _, self.buyer_profile, self.address = make_buyer("customer@test.com")
+        self.farmer_user, self.farmer_profile = make_farmer("farmer@test.com")
+        self.admin_user = make_admin("admin@test.com")
+        product = make_product(self.farmer_profile, price="15.00")
+        self.order = Order.objects.create(
+            buyer=self.buyer_profile, delivery_address=self.address,
+            subtotal=Decimal("15.00"), total=Decimal("15.00"),
+        )
+        OrderItem.objects.create(
+            order=self.order, product=product, farmer=self.farmer_profile,
+            quantity=1, price_at_purchase=Decimal("15.00"),
+        )
+
+    def _farmer_order_ids(self):
+        client = APIClient()
+        client.force_authenticate(user=self.farmer_user)
+        return [o["id"] for o in client.get("/api/v1/orders/").data["results"]]
+
+    def test_unpaid_order_hidden_from_farmer(self):
+        self.assertNotIn(self.order.id, self._farmer_order_ids())
+
+    def test_unpaid_order_cannot_be_prepared_even_by_admin(self):
+        for user in (self.farmer_user, self.admin_user):
+            with self.assertRaises(ValidationError):
+                self.order.transition_status(OrderStatus.PREPARING, changed_by=user)
+
+    def test_payment_awaiting_verification_does_not_release(self):
+        from apps.payments.models import Transaction
+        Transaction.objects.create(
+            order=self.order, user=self.buyer_profile.user, provider="direct_deposit",
+            type="payment", amount=self.order.total, status="awaiting_verification",
+        )
+        self.assertFalse(self.order.is_released)
+        self.assertNotIn(self.order.id, self._farmer_order_ids())
+
+    def test_confirmed_payment_releases_order(self):
+        mark_paid(self.order)
+        self.assertIn(self.order.id, self._farmer_order_ids())
+        self.order.transition_status(OrderStatus.PREPARING, changed_by=self.farmer_user)
+        self.assertEqual(self.order.status, OrderStatus.PREPARING)
+
+    def test_credit_terms_order_released_without_payment(self):
+        self.order.payment_terms = "net_30"
+        self.order.save()
+        self.assertIn(self.order.id, self._farmer_order_ids())
+        self.order.transition_status(OrderStatus.PREPARING, changed_by=self.farmer_user)
+        self.assertEqual(self.order.status, OrderStatus.PREPARING)

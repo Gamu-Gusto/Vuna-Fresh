@@ -7,19 +7,25 @@ Covers:
 - Credit-terms and already-paid orders can't be paid again
 - Proof upload: file validation, one pending proof per transaction
 - Admin approve marks the order paid; reject lets the buyer start over
+- Approving needs the funds confirmed on the bank statement: amount (at least
+  what's due), date, reference and an explicit "funds cleared" confirmation;
+  one deposit can't pay two orders; an admin can't approve their own payment
+- Farmers hear about a prepaid order only once its payment is confirmed
 """
 import shutil
 import tempfile
+from datetime import timedelta
 from decimal import Decimal
 
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.orders.models import Order, OrderItem
 from apps.orders.tests import make_admin, make_buyer, make_farmer, make_product
 
-from .models import FarmerPayout, Transaction, TransactionStatus
+from .models import DirectDepositProof, FarmerPayout, Transaction, TransactionStatus
 
 MEDIA_ROOT = tempfile.mkdtemp()
 
@@ -60,6 +66,25 @@ class DirectDepositFlowTests(TestCase):
             "transaction": txn_id, "file_url": "http://localhost/media/deposit-proofs/x.pdf",
             "bank_reference_number": reference,
         }, format="json")
+
+    def approve(self, admin_client, proof, **overrides):
+        body = {
+            "action": "approve", "funds_cleared": True, "amount_received": proof["amount"],
+            "received_on": timezone.localdate().isoformat(),
+            "bank_statement_reference": proof["expected_reference"],
+            **overrides,
+        }
+        return admin_client.post(f"/api/v1/payments/deposit-proofs/{proof['id']}/review/", body, format="json")
+
+    def paid_proof(self):
+        """Initiate payment and submit proof as the buyer; returns the proof's API data."""
+        payment = self.initiate().data
+        return self.submit_proof(payment["transaction"]["id"], payment["payment"]["reference"]).data
+
+    def admin_client(self, email="admin@test.com"):
+        client = APIClient()
+        client.force_authenticate(make_admin(email))
+        return client
 
     def order_payment(self):
         return self.client.get(f"/api/v1/orders/{self.order.id}/").data["payment"]
@@ -109,8 +134,11 @@ class DirectDepositFlowTests(TestCase):
 
         admin = APIClient()
         admin.force_authenticate(make_admin("admin@test.com"))
-        res = admin.post(f"/api/v1/payments/deposit-proofs/{proof['id']}/review/", {"action": "approve"}, format="json")
+        res = self.approve(admin, proof)
         self.assertEqual(res.status_code, 200)
+        saved = DirectDepositProof.objects.get(pk=proof["id"])
+        self.assertEqual(saved.amount_received, Decimal("100.00"))
+        self.assertEqual(saved.bank_statement_reference, proof["expected_reference"])
 
         self.assertEqual(self.order_payment()["status"], "paid")
         self.assertTrue(FarmerPayout.objects.filter(order=self.order).exists())
@@ -145,7 +173,80 @@ class DirectDepositFlowTests(TestCase):
         mail.outbox.clear()
         admin = APIClient()
         admin.force_authenticate(admin_user)
-        admin.post(f"/api/v1/payments/deposit-proofs/{proof['id']}/review/", {"action": "approve"}, format="json")
+        self.approve(admin, proof)
         recipients = [m.to[0] for m in mail.outbox]
         self.assertIn("buyer@test.com", recipients)
         self.assertIn("farmer@test.com", recipients)
+
+    def test_approve_requires_funds_confirmation_details(self):
+        proof = self.paid_proof()
+        admin = self.admin_client()
+        res = admin.post(f"/api/v1/payments/deposit-proofs/{proof['id']}/review/", {"action": "approve"}, format="json")
+        self.assertEqual(res.status_code, 400)
+        self.assertEqual(
+            set(res.data["error"]["detail"]),
+            {"funds_cleared", "amount_received", "received_on", "bank_statement_reference"},
+        )
+        self.assertEqual(self.approve(admin, proof, funds_cleared=False).status_code, 400)
+        self.assertEqual(self.approve(admin, proof, bank_statement_reference="  ").status_code, 400)
+        future = (timezone.localdate() + timedelta(days=1)).isoformat()
+        self.assertEqual(self.approve(admin, proof, received_on=future).status_code, 400)
+        self.assertEqual(self.order_payment()["status"], "proof_submitted")
+        self.assertFalse(FarmerPayout.objects.exists())
+
+    def test_short_payment_cannot_be_approved(self):
+        proof = self.paid_proof()
+        res = self.approve(self.admin_client(), proof, amount_received="99.99")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("amount_received", res.data["error"]["detail"])
+        self.assertEqual(self.order_payment()["status"], "proof_submitted")
+
+    def test_overpayment_can_be_approved(self):
+        proof = self.paid_proof()
+        self.assertEqual(self.approve(self.admin_client(), proof, amount_received="120.00").status_code, 200)
+        self.assertEqual(self.order_payment()["status"], "paid")
+
+    def test_one_deposit_cannot_pay_two_orders(self):
+        admin = self.admin_client()
+        first = self.paid_proof()
+        self.assertEqual(self.approve(admin, first, bank_statement_reference="SAME-DEPOSIT").status_code, 200)
+
+        second_order = Order.objects.create(
+            buyer=self.buyer_profile, delivery_address=self.address,
+            subtotal=Decimal("100.00"), total=Decimal("100.00"),
+        )
+        payment = self.client.post(
+            "/api/v1/payments/initiate/", {"order_id": second_order.id, "provider": "direct_deposit"}, format="json",
+        ).data
+        second = self.submit_proof(payment["transaction"]["id"], payment["payment"]["reference"]).data
+        res = self.approve(admin, second, bank_statement_reference="same-deposit")
+        self.assertEqual(res.status_code, 400)
+        self.assertIn(f"order #{self.order.id}", str(res.data["error"]["detail"]))
+
+    def test_admin_cannot_approve_own_payment(self):
+        proof = self.paid_proof()
+        DirectDepositProof.objects.filter(pk=proof["id"]).update(uploaded_by=make_admin("self@test.com"))
+        admin = APIClient()
+        admin.force_authenticate(DirectDepositProof.objects.get(pk=proof["id"]).uploaded_by)
+        self.assertEqual(self.approve(admin, proof).status_code, 403)
+        self.assertEqual(self.order_payment()["status"], "proof_submitted")
+
+    def test_proof_cannot_be_reviewed_twice(self):
+        proof = self.paid_proof()
+        admin = self.admin_client()
+        self.assertEqual(self.approve(admin, proof).status_code, 200)
+        self.assertEqual(self.approve(admin, proof).status_code, 400)
+        self.assertEqual(FarmerPayout.objects.filter(order=self.order).count(), 1)
+
+    def test_farmer_not_told_about_order_until_payment_confirmed(self):
+        from apps.notifications.models import Notification
+        from apps.orders.notifications import notify_order_placed
+
+        notify_order_placed(self.order)
+        farmer_user = self.farmer_profile.user
+        self.assertFalse(Notification.objects.filter(user=farmer_user).exists())
+
+        proof = self.paid_proof()
+        self.assertFalse(Notification.objects.filter(user=farmer_user).exists())
+        self.approve(self.admin_client(), proof)
+        self.assertTrue(Notification.objects.filter(user=farmer_user, type="order_paid").exists())

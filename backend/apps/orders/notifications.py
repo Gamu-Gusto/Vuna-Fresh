@@ -32,20 +32,22 @@ def notify_order_placed(order):
             NotificationCategory.ORDER_UPDATES, link=f"/orders/{order.id}/pay",
         )
 
-    for farmer in _farmer_users(order):
-        notify(
-            farmer, "new_order",
-            f"New order #{order.id} includes your products."
-            + ("" if on_credit else " Wait for it to show as paid before preparing."),
-            NotificationCategory.ORDER_UPDATES, link=f"/farmer/orders/{order.id}",
-        )
+    # A prepaid order reaches farmers only once its payment is confirmed
+    # (notify_order_paid); a credit order is released straight away.
+    if on_credit:
+        for farmer in _farmer_users(order):
+            notify(
+                farmer, "new_order",
+                f"New order #{order.id} includes your products. You can start preparing it.",
+                NotificationCategory.ORDER_UPDATES, link=f"/farmer/orders/{order.id}",
+            )
 
 
 def notify_order_paid(order):
     for farmer in _farmer_users(order):
         notify(
             farmer, "order_paid",
-            f"Order #{order.id} has been paid. You can start preparing it.",
+            f"New paid order #{order.id} includes your products. You can start preparing it.",
             NotificationCategory.ORDER_UPDATES, link=f"/farmer/orders/{order.id}",
         )
 
