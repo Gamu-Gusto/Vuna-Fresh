@@ -1,0 +1,103 @@
+# Render Blueprint for a test deployment: Postgres + Django API + Next.js web.
+# Values marked `sync: false` are asked for when the Blueprint is created.
+databases:
+  - name: vunafresh-db
+    plan: free
+    databaseName: vunafresh
+    user: vunafresh
+
+services:
+  - type: web
+    name: vunafresh-api
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput && python manage.py migrate --noinput
+    startCommand: gunicorn config.wsgi:application
+    healthCheckPath: /admin/login/
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.0
+      - key: DJANGO_SETTINGS_MODULE
+        value: config.settings.production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: vunafresh-db
+          property: connectionString
+      # Public URL of the vunafresh-web service, e.g. https://vunafresh-web.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false
+      # Public URL of the web app, used in email links (password reset, orders)
+      - key: FRONTEND_URL
+        sync: false
+      # SMTP for emails (e.g. Brevo free tier). Without EMAIL_HOST, emails are only logged.
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: DEFAULT_FROM_EMAIL
+        value: Vuna Fresh <no-reply@vunafresh.co.za>
+      # Cloudflare R2 — Render's disk is wiped on every deploy, so uploads must go here
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ENDPOINT_URL
+        sync: false
+      # Bucket's public domain without https://, e.g. pub-xxxx.r2.dev
+      - key: R2_PUBLIC_DOMAIN
+        sync: false
+      # Payments are EFT/direct deposit only for now. PayFast stays off until the
+      # merchant account is live; then set PAYFAST_ENABLED and fill in the rest.
+      - key: PAYFAST_ENABLED
+        value: "False"
+      - key: PAYFAST_SANDBOX
+        value: "True"
+      - key: PAYFAST_MERCHANT_ID
+        value: ""
+      - key: PAYFAST_MERCHANT_KEY
+        value: ""
+      - key: PAYFAST_PASSPHRASE
+        value: ""
+      - key: PAYFAST_NOTIFY_URL
+        value: ""
+      - key: PAYFAST_RETURN_URL
+        value: ""
+      - key: PAYFAST_CANCEL_URL
+        value: ""
+      # Test account shown to buyers at checkout — swap for the Vuna Fresh account before launch
+      - key: PLATFORM_BANK_NAME
+        value: FNB
+      - key: PLATFORM_BANK_ACCOUNT_HOLDER
+        value: Hexx Digital Orbit
+      - key: PLATFORM_BANK_ACCOUNT_NUMBER
+        value: "63201202411"
+      - key: PLATFORM_BANK_BRANCH_CODE
+        value: "250655"
+      - key: PLATFORM_BANK_ACCOUNT_TYPE
+        value: Cheque/Current
+
+  - type: web
+    name: vunafresh-web
+    runtime: node
+    plan: free
+    rootDir: web
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_VERSION
+        value: 24.18.0
+      # Public URL of vunafresh-api + /api/v1, e.g. https://vunafresh-api.onrender.com/api/v1
+      # Baked in at build time, so redeploy this service after changing it.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false

@@ -1,0 +1,15 @@
+# Python virtualenvs
+.venv/
+venv/
+__pycache__/
+
+# Claude Code runtime state
+.claude/scheduled_tasks.lock
+
+# Business documents and loose assets (kept locally, not part of the codebase)
+*.docx
+Spinach Bunch.jpg
+
+# OS / editor
+.DS_Store
+Thumbs.db

@@ -1,0 +1,9 @@
+from rest_framework.routers import DefaultRouter
+from .admin_views import DriverApprovalViewSet, FarmerApprovalViewSet, UserManagementViewSet
+
+router = DefaultRouter()
+router.register("admin/farmers", FarmerApprovalViewSet, basename="admin-farmer")
+router.register("admin/drivers", DriverApprovalViewSet, basename="admin-driver")
+router.register("admin/users", UserManagementViewSet, basename="admin-user")
+
+urlpatterns = router.urls

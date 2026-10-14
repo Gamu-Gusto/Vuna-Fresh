@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  @apply bg-brand-bg text-gray-800 font-sans antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  @apply font-heading text-navy;
+  text-wrap: balance;
+}
+
+/* Prices and quantities: aligned figures in the body face. */
+.font-mono {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible keyboard focus everywhere, never on mouse click. */
+:focus-visible {
+  outline: 2px solid #2F7A2C;
+  outline-offset: 2px;
+}
+
+@layer utilities {
+  /* Condensed display cut of Archivo, for headlines that carry the page. */
+  .type-display {
+    font-family: var(--font-archivo), sans-serif;
+    font-stretch: 68%;
+    font-weight: 800;
+    letter-spacing: -0.005em;
+    word-spacing: 0.06em;
+    line-height: 0.95;
+  }
+  .type-condensed {
+    font-stretch: 80%;
+  }
+}
+
+@layer components {
+  .btn-primary {
+    @apply bg-brand-green text-white font-semibold rounded-md transition-colors duration-150
+           hover:bg-brand-light
+           disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+
+  .btn-dark {
+    @apply bg-navy text-white font-semibold rounded-md transition-colors duration-150
+           hover:bg-navy/90
+           disabled:opacity-60 disabled:cursor-not-allowed;
+  }
+}
