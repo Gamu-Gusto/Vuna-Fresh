@@ -7,9 +7,9 @@
 #   - There is no Shell, so the first admin is created during the build from
 #     DJANGO_SUPERUSER_* below (skipped once it exists).
 #
-# Render added a suffix to the website's address (vunafresh-web-8mmw), so the
-# API's CORS_ALLOWED_ORIGINS, CSRF_TRUSTED_ORIGINS and FRONTEND_URL use that.
-# If a service is ever recreated with a new address, update these to match.
+# Create this Blueprint ONCE. Each new Blueprint makes another copy of every
+# service with a new random suffix. To change settings later, edit this file,
+# push, and use the existing Blueprint's Sync.
 
 databases:
   - name: vunafresh-db
@@ -41,14 +41,17 @@ services:
           name: vunafresh-db
           property: connectionString
 
-      # The website's address, so the browser is allowed to call this API
-      - key: CORS_ALLOWED_ORIGINS
-        value: https://vunafresh-web-8mmw.onrender.com
+      # Which website addresses may call this API. Render adds a random suffix
+      # when a name is taken (vunafresh-web-8mmw, vunafresh-web-20qr, ...), so
+      # any vunafresh-web address on onrender.com is allowed.
+      - key: CORS_ALLOWED_ORIGIN_REGEXES
+        value: ^https://vunafresh-web(-[a-z0-9]+)?\.onrender\.com$
       - key: CSRF_TRUSTED_ORIGINS
-        value: https://vunafresh-web-8mmw.onrender.com
-      # Used for links in emails (password reset, order updates)
+        value: https://vunafresh-web-20qr.onrender.com
+      # Used for links in emails (password reset, order updates). Set to the
+      # website address you actually use.
       - key: FRONTEND_URL
-        value: https://vunafresh-web-8mmw.onrender.com
+        value: https://vunafresh-web-20qr.onrender.com
 
       # First admin account, created on the first deploy. You choose the password.
       - key: DJANGO_SUPERUSER_EMAIL

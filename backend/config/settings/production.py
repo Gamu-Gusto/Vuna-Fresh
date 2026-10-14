@@ -11,6 +11,9 @@ if _render_host:
 # The web frontend runs on a different origin, so it must be allowed explicitly,
 # e.g. CORS_ALLOWED_ORIGINS=https://vunafresh-web.onrender.com
 CORS_ALLOWED_ORIGINS = env.list("CORS_ALLOWED_ORIGINS", default=[])  # noqa: F405
+# Pattern alternative, for hosts that add random suffixes to service names
+# (Render: vunafresh-web-8mmw, vunafresh-web-20qr, ...). Separate several with commas.
+CORS_ALLOWED_ORIGIN_REGEXES = env.list("CORS_ALLOWED_ORIGIN_REGEXES", default=[])  # noqa: F405
 CSRF_TRUSTED_ORIGINS = env.list("CSRF_TRUSTED_ORIGINS", default=[])  # noqa: F405
 
 # Security headers
