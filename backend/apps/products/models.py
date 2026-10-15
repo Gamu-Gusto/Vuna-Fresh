@@ -94,6 +94,11 @@ class Product(models.Model):
     stock_quantity = models.PositiveIntegerField(default=0)
     low_stock_threshold = models.PositiveIntegerField(default=10)
     is_available = models.BooleanField(default=True)
+    # Removed by the farmer (or an admin) after it had been ordered: hidden from
+    # the shop but kept, with its orders, payouts and reviews. Can be restored.
+    # A product that was never ordered is deleted instead (see archiving.py).
+    is_archived = models.BooleanField(default=False)
+    archived_at = models.DateTimeField(null=True, blank=True)
     image_url = models.URLField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

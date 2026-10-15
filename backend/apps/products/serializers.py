@@ -54,6 +54,8 @@ class ProductSerializer(serializers.ModelSerializer):
             "stock_quantity",
             "low_stock_threshold",
             "is_available",
+            "is_archived",
+            "archived_at",
             "is_low_stock",
             "image_url",
             "average_rating",
@@ -62,7 +64,7 @@ class ProductSerializer(serializers.ModelSerializer):
             "updated_at",
         ]
         read_only_fields = [
-            "id", "farmer_id", "farm_name", "category_name", "is_low_stock",
+            "id", "farmer_id", "farm_name", "category_name", "is_low_stock", "is_archived", "archived_at",
             "average_rating", "review_count", "created_at", "updated_at",
         ]
 
@@ -98,6 +100,11 @@ class ProductWriteSerializer(serializers.ModelSerializer):
             )
         if not value.is_active:
             raise serializers.ValidationError("This product is no longer in the catalogue.")
+        return value
+
+    def validate_is_available(self, value):
+        if value and self.instance is not None and self.instance.is_archived:
+            raise serializers.ValidationError("Restore this product before putting it back on sale.")
         return value
 
     def validate_price(self, value):

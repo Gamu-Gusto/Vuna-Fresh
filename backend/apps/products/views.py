@@ -7,6 +7,7 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
+from .archiving import RestoreError, remove_product, restore_product
 from .models import CatalogueItem, Category, Product, SurplusListing, SurplusListingStatus
 from .permissions import IsAdminUser, IsProductFarmer, IsProductFarmerOrAdmin
 from .serializers import (
@@ -77,6 +78,12 @@ class ProductViewSet(viewsets.ModelViewSet):
         if farmer_id:
             qs = qs.filter(farmer_id=farmer_id)
 
+        # Lists leave out archived products unless asked for them (?archived=true,
+        # the farmer's "Archived" tab). Buyers never see them: archiving also
+        # makes a product unavailable, which is filtered above.
+        if self.action == "list":
+            qs = qs.filter(is_archived=self.request.query_params.get("archived") == "true")
+
         return qs
 
     def get_serializer_class(self):
@@ -84,12 +91,30 @@ class ProductViewSet(viewsets.ModelViewSet):
             return ProductWriteSerializer
         return ProductSerializer
 
+    def destroy(self, request, *args, **kwargs):
+        """
+        DELETE /products/<id>/ — "Remove". Archives a product that has been ordered
+        (keeping its orders, payouts and reviews) and deletes one that never was.
+        Either way it leaves the shop, carts and subscriptions (see archiving.py).
+        """
+        result = remove_product(self.get_object())
+        return Response({"result": result}, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="restore")
+    def restore(self, request, pk=None):
+        """POST /products/<id>/restore/ — back to the farmer's list, hidden until they list it."""
+        try:
+            product = restore_product(self.get_object())
+        except RestoreError as e:
+            return Response({"error": {"code": "bad_request", "message": str(e)}}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(ProductSerializer(product, context=self.get_serializer_context()).data)
+
     def get_permissions(self):
         if self.action in ("list", "retrieve"):
             return [AllowAny()]
         if self.action in ("create", "upload_image"):
             return [IsAuthenticated(), IsProductFarmer()]
-        # update / partial_update / destroy
+        # update / partial_update / destroy (remove) / restore: the product's farmer or an admin
         return [IsAuthenticated(), IsProductFarmerOrAdmin()]
 
     @action(

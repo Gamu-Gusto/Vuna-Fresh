@@ -168,14 +168,48 @@ class ProductAdminForm(forms.ModelForm):
 @admin.register(Product)
 class ProductAdmin(admin.ModelAdmin):
     form = ProductAdminForm
-    list_display = ["name", "farmer", "category", "price", "unit", "stock_quantity", "is_available"]
-    list_filter = ["is_available", "category"]
+    list_display = ["name", "farmer", "category", "price", "unit", "stock_quantity", "is_available", "is_archived"]
+    list_filter = ["is_available", "is_archived", "category"]
+    actions = ["remove_products", "restore_products"]
+
+    # Plain deletion would skip the cart, subscription and notification steps
+    # (and fail for ordered products); "Remove" below does it properly.
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    @admin.action(description="Remove (archive if ordered, otherwise delete)")
+    def remove_products(self, request, queryset):
+        from .archiving import remove_product
+
+        results = [remove_product(p) for p in list(queryset)]
+        self.message_user(
+            request,
+            f"Archived {results.count('archived')}, deleted {results.count('deleted')}. "
+            "Subscribed buyers have been told.",
+            messages.SUCCESS,
+        )
+
+    @admin.action(description="Restore archived products (hidden until the farmer lists them)")
+    def restore_products(self, request, queryset):
+        from .archiving import RestoreError, restore_product
+
+        restored, problems = 0, []
+        for product in queryset:
+            try:
+                restore_product(product)
+                restored += 1
+            except RestoreError as e:
+                problems.append(f"{product.name}: {e}")
+        if restored:
+            self.message_user(request, f"Restored {restored} product(s).", messages.SUCCESS)
+        for problem in problems:
+            self.message_user(request, problem, messages.WARNING)
     search_fields = ["name", "farmer__farm_name"]
     autocomplete_fields = ["catalogue_item"]
-    readonly_fields = ["name", "category", "created_at", "updated_at", "image_preview"]
+    readonly_fields = ["name", "category", "is_archived", "archived_at", "created_at", "updated_at", "image_preview"]
     fields = [
         "farmer", "catalogue_item", "name", "category", "description",
-        "price", "unit", "stock_quantity", "low_stock_threshold", "is_available",
+        "price", "unit", "stock_quantity", "low_stock_threshold", "is_available", "is_archived", "archived_at",
         "image_preview", "image_upload", "image_url",
         "created_at", "updated_at",
     ]
