@@ -374,8 +374,14 @@ class FarmerPayoutViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 class CommissionSettingsViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
     """
     GET  /api/v1/payments/commission-settings/ — admin: list all (current + historical)
-    POST /api/v1/payments/commission-settings/ — admin: set a new rate (with effective_from)
+    POST /api/v1/payments/commission-settings/ — super admin: set a new rate (with effective_from)
     """
-    permission_classes = [IsAuthenticated, IsAdminUser]
+
+    def get_permissions(self):
+        # The commission decides what farmers are paid, so only the super admin changes it
+        if self.action == "create":
+            return [IsAuthenticated(), IsSuperAdmin()]
+        return [IsAuthenticated(), IsAdminUser()]
+
     serializer_class = CommissionSettingsSerializer
     queryset = CommissionSettings.objects.all()

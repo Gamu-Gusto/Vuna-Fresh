@@ -222,9 +222,22 @@ class SuperAdminAndManagerTests(TestCase):
         self.assertTrue(manager.has_perm("products.add_catalogueitem"))
         self.assertTrue(manager.has_perm("users.change_farmerprofile"))
         self.assertTrue(manager.has_perm("users.view_user"))
-        for reserved in ("users.add_user", "users.change_user", "payments.change_farmerpayout", "auth.change_group"):
+        self.assertTrue(manager.has_perm("payments.view_commissionsettings"))
+        for reserved in (
+            "users.add_user", "users.change_user", "payments.change_farmerpayout",
+            "payments.add_commissionsettings", "payments.change_commissionsettings", "auth.change_group",
+        ):
             self.assertFalse(manager.has_perm(reserved), reserved)
         self.assertFalse(manager.has_module_perms("auth"))
         # Ordinary users get nothing from the manager backend
         buyer = User.objects.create_user(email="b@test.com", password="x", role="customer")
         self.assertFalse(buyer.has_perm("products.add_catalogueitem"))
+
+
+    def test_only_super_admin_changes_commission_rate(self):
+        self.add_manager()
+        manager_client, _ = self.manager_client()
+        body = {"commission_rate": "10.00", "effective_from": "2026-01-01T00:00:00Z"}
+        self.assertEqual(manager_client.post("/api/v1/payments/commission-settings/", body, format="json").status_code, 403)
+        self.assertEqual(manager_client.get("/api/v1/payments/commission-settings/").status_code, 200)
+        self.assertEqual(self.client.post("/api/v1/payments/commission-settings/", body, format="json").status_code, 201)

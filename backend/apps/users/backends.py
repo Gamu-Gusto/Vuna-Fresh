@@ -4,7 +4,8 @@ Django admin permissions for managers.
 A manager is an admin-role, staff, non-superuser account (see
 apps.users.permissions.is_super_admin). Managers can use every part of Django
 admin except the super admin's two reserved powers: managing accounts (which
-would let them create admins or make themselves superuser) and farmer payouts.
+would let them create admins or make themselves superuser), farmer payouts and
+the commission rate that decides them.
 Django's groups and permissions are off-limits too, so a manager can't grant
 themselves anything.
 """
@@ -13,6 +14,7 @@ themselves anything.
 RESERVED_PERMISSIONS = {
     "users.add_user", "users.change_user", "users.delete_user",
     "payments.add_farmerpayout", "payments.change_farmerpayout", "payments.delete_farmerpayout",
+    "payments.add_commissionsettings", "payments.change_commissionsettings", "payments.delete_commissionsettings",
 }
 RESERVED_APPS = {"auth"}
 
