@@ -4,8 +4,9 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api';
 
-// Farmer payouts are calculated when a buyer payment is confirmed. Admin pays
-// each farm by EFT outside the system, then marks the payout paid here.
+// Farmer payouts are calculated when a buyer payment is confirmed, but a farm
+// is paid only once the driver has confirmed the order was delivered. Admin
+// pays each farm by EFT outside the system, then marks the payout paid here.
 export default function AdminPayoutsPage() {
   const [status, setStatus] = useState('pending');
   const [payouts, setPayouts] = useState([]);
@@ -34,14 +35,16 @@ export default function AdminPayoutsPage() {
     }
   }
 
-  const total = payouts.filter(p => p.status === 'pending').reduce((s, p) => s + Number(p.net_amount), 0);
+  const ready = payouts.filter(p => p.ready_to_pay);
+  const total = ready.reduce((s, p) => s + Number(p.net_amount), 0);
+  const waiting = payouts.filter(p => p.status === 'pending' && !p.ready_to_pay).length;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-gray-900">Farmer payouts</h1>
-          <p className="text-sm text-gray-500 mt-1">Pay each farm by EFT, then mark the payout as paid.</p>
+          <p className="text-sm text-gray-500 mt-1">Once an order is delivered, pay each farm by EFT, then mark the payout as paid.</p>
         </div>
         <select value={status} onChange={e => { setLoading(true); setStatus(e.target.value); }} className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm bg-white">
           <option value="pending">Pending</option>
@@ -59,7 +62,10 @@ export default function AdminPayoutsPage() {
       ) : (
         <>
           {status === 'pending' && (
-            <p className="text-sm text-gray-600">Total to pay: <span className="font-mono font-semibold">R{total.toFixed(2)}</span></p>
+            <p className="text-sm text-gray-600">
+              Ready to pay now: <span className="font-mono font-semibold">R{total.toFixed(2)}</span>
+              {waiting > 0 && <span className="text-gray-400"> · {waiting} awaiting delivery</span>}
+            </p>
           )}
           <div className="bg-white rounded border border-hairline overflow-x-auto">
             <table className="w-full text-sm">
@@ -82,8 +88,10 @@ export default function AdminPayoutsPage() {
                     <td className="px-4 py-3 font-mono text-gray-500">R{Number(p.commission_amount).toFixed(2)}</td>
                     <td className="px-4 py-3 font-mono font-semibold">R{Number(p.net_amount).toFixed(2)}</td>
                     <td className="px-4 py-3 text-right">
-                      {p.status === 'pending' ? (
+                      {p.ready_to_pay ? (
                         <button onClick={() => markPaid(p)} disabled={busy === p.id} className="btn-primary text-xs px-3 py-1.5 disabled:opacity-60">Mark paid</button>
+                      ) : p.status === 'pending' ? (
+                        <span className="text-xs text-gray-400">{p.order_status === 'cancelled' ? 'Order cancelled' : 'Awaiting delivery'}</span>
                       ) : (
                         <span className="text-xs text-brand-green">Paid {p.paid_at && new Date(p.paid_at).toLocaleDateString('en-ZA')}</span>
                       )}

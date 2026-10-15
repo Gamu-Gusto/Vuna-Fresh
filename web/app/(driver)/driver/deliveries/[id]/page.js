@@ -17,6 +17,8 @@ const DRIVER_TRANSITIONS = {
     next: 'delivered',
     label: 'Mark as delivered',
     description: 'Confirm the order has been handed to the buyer.',
+    // Delivery is final: it lets Vuna Fresh pay the farmers for this order
+    confirm: id => `Confirm order #${id} has been handed to the buyer? This can't be undone, and the farmers will be paid for it.`,
   },
 };
 
@@ -51,7 +53,8 @@ export default function DeliveryDetailPage() {
     load();
   }, [id, router]);
 
-  async function updateStatus(newStatus) {
+  async function updateStatus(newStatus, confirmMessage) {
+    if (confirmMessage && !window.confirm(confirmMessage)) return;
     setUpdating(true);
     setError('');
     try {
@@ -111,7 +114,7 @@ export default function DeliveryDetailPage() {
         <div className="bg-brand-green/5 border border-brand-green/20 rounded p-5">
           <p className="text-sm text-gray-600 mb-3">{transition.description}</p>
           <button
-            onClick={() => updateStatus(transition.next)}
+            onClick={() => updateStatus(transition.next, transition.confirm?.(order.id))}
             disabled={updating}
             className="btn-primary px-5 py-2"
           >

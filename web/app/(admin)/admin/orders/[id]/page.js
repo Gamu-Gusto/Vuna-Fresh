@@ -50,7 +50,10 @@ export default function AdminOrderDetailPage() {
             ? new Date(order.scheduled_delivery_time).toLocaleString('en-ZA')
             : '—'}
         />
-        <Detail label="Driver assigned" value={order.driver ? `Driver #${order.driver}` : 'Not assigned'} />
+        <Detail label="Driver assigned" value={order.driver ? `${order.driver_name || 'Driver'} (#${order.driver})` : 'Not assigned'} />
+        {order.driver_review && (
+          <Detail label="Buyer's driver rating" value={`${order.driver_review.rating} / 5`} />
+        )}
       </div>
 
       {order.status === 'ready_for_pickup' && <AssignDriver order={order} onAssigned={setOrder} />}
@@ -156,7 +159,11 @@ function AssignDriver({ order, onAssigned }) {
           <select value={driverId} onChange={e => setDriverId(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 bg-white min-w-56">
             <option value="">Choose a driver…</option>
             {(drivers ?? []).map(d => (
-              <option key={d.id} value={d.id}>{d.full_name || d.email}{d.vehicle_type ? ` (${d.vehicle_type})` : ''}</option>
+              <option key={d.id} value={d.id}>
+                {d.full_name || d.email}
+                {d.vehicle_type ? ` (${d.vehicle_type})` : ''}
+                {d.rating_count ? ` · ${d.average_rating.toFixed(1)}★ from ${d.rating_count}` : ' · no ratings yet'}
+              </option>
             ))}
           </select>
           <button onClick={assign} disabled={!driverId || saving || String(order.driver) === driverId} className="btn-primary px-4 py-1.5 disabled:opacity-60">

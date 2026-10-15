@@ -32,7 +32,7 @@ export default function FarmerPayoutsPage() {
       <div>
         <h1 className="text-2xl font-bold text-gray-800">Payouts</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Your share of each paid order, after Vuna Fresh&apos;s commission. Payouts are made by EFT to your bank account.
+          Your share of each paid order, after Vuna Fresh&apos;s commission. You&apos;re paid by EFT to your bank account once the driver has delivered the order.
         </p>
       </div>
 
@@ -68,7 +68,9 @@ export default function FarmerPayoutsPage() {
                   <td className="px-4 py-3">
                     {p.status === 'paid'
                       ? <span className="text-brand-green">Paid {p.paid_at && new Date(p.paid_at).toLocaleDateString('en-ZA')}</span>
-                      : <span className="text-amber-700">Pending</span>}
+                      : p.ready_to_pay
+                        ? <span className="text-amber-700">Delivered, payment on its way</span>
+                        : <span className="text-gray-500">{p.order_status === 'cancelled' ? 'Order cancelled' : 'Paid once delivered'}</span>}
                   </td>
                 </tr>
               ))}

@@ -13,6 +13,7 @@ const ACTIVE_STATUSES = new Set(['ready_for_pickup', 'out_for_delivery']);
 export default function DriverDashboard() {
   const { user } = useAuth();
   const [orders, setOrders] = useState([]);
+  const [ratings, setRatings] = useState(null); // { summary, recent }
   const [pending, setPending] = useState(false);
   const [loading, setLoading] = useState(true);
 
@@ -21,8 +22,14 @@ export default function DriverDashboard() {
       try {
         // Profile endpoint requires IsDriver (approved). 403 = not yet approved.
         await apiClient.get('/users/me/profile/driver/');
-        const data = await apiClient.get('/orders/');
+        const [data, summary, recent] = await Promise.all([
+          apiClient.get('/orders/'),
+          // Ratings are a nice-to-have: if they fail, still show the deliveries
+          apiClient.get('/driver-reviews/summary/').catch(() => null),
+          apiClient.get('/driver-reviews/').catch(() => null),
+        ]);
         setOrders(data.results ?? []);
+        if (summary && recent) setRatings({ summary, recent: (recent.results ?? []).slice(0, 5) });
       } catch (err) {
         if (err instanceof ApiError && err.status === 403) {
           setPending(true);
@@ -78,6 +85,40 @@ export default function DriverDashboard() {
           <DeliveryTable orders={completed} />
         )}
       </Section>
+
+      {ratings && <Ratings summary={ratings.summary} recent={ratings.recent} />}
+    </div>
+  );
+}
+
+// Buyers rate each delivery after it arrives. Drivers see the rating and
+// comment, not who wrote it.
+function Ratings({ summary, recent }) {
+  return (
+    <div>
+      <h2 className="text-lg font-semibold text-gray-800 mb-3">Your rating</h2>
+      {summary.count === 0 ? (
+        <EmptyState className="p-8">No ratings yet. Buyers can rate each delivery once it arrives.</EmptyState>
+      ) : (
+        <div className="bg-white rounded border border-hairline p-5 space-y-4">
+          <p className="text-sm text-gray-600">
+            <span className="text-2xl font-bold text-gray-900">{summary.average.toFixed(1)}</span>
+            <span className="text-amber-500 ml-1" aria-hidden="true">★</span>
+            <span className="ml-2">from {summary.count} {summary.count === 1 ? 'rating' : 'ratings'}</span>
+          </p>
+          <ul className="divide-y divide-gray-50">
+            {recent.map(r => (
+              <li key={r.id} className="py-2 text-sm">
+                <span className="text-amber-500" aria-label={`${r.rating} out of 5 stars`}>
+                  {'★'.repeat(r.rating)}<span className="text-gray-300">{'★'.repeat(5 - r.rating)}</span>
+                </span>
+                <span className="ml-2 text-xs text-gray-400 font-mono">Order #{r.order}</span>
+                {r.comment && <p className="text-gray-700 mt-0.5">{r.comment}</p>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
