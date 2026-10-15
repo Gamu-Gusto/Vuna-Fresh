@@ -7,11 +7,13 @@ from rest_framework.response import Response
 from .admin_serializers import (
     AdminUserSerializer,
     ApprovalActionSerializer,
+    ManagerCreateSerializer,
     PendingDriverSerializer,
     PendingFarmerSerializer,
+    StaffSerializer,
 )
-from .models import DriverProfile, FarmerProfile, User, UserStatus
-from .permissions import IsAdminUser
+from .models import DriverProfile, FarmerProfile, User, UserRole, UserStatus
+from .permissions import IsAdminUser, IsSuperAdmin, is_super_admin
 
 
 class FarmerApprovalViewSet(viewsets.GenericViewSet):
@@ -145,7 +147,105 @@ class UserManagementViewSet(
                 {"error": {"code": "forbidden", "message": "You cannot deactivate your own account."}},
                 status=status.HTTP_403_FORBIDDEN,
             )
+        if user.role == UserRole.ADMIN and not is_super_admin(request.user):
+            return Response(
+                {"error": {"code": "forbidden", "message": "Only the super admin can deactivate admin accounts."}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         user.status = UserStatus.DEACTIVATED
         user.is_active = False
         user.save(update_fields=["status", "is_active"])
         return Response(AdminUserSerializer(user).data)
+
+
+class StaffViewSet(mixins.ListModelMixin, mixins.CreateModelMixin, viewsets.GenericViewSet):
+    """
+    Super admin only — the admin team.
+
+    GET  /api/v1/admin/staff/                        — every admin-role account
+    POST /api/v1/admin/staff/                        — add a manager {email, first_name, last_name, phone?};
+                                                        returns the account and a one-time set_password_link
+    POST /api/v1/admin/staff/<id>/deactivate/        — deactivate a manager
+    POST /api/v1/admin/staff/<id>/reactivate/        — reactivate a manager
+    POST /api/v1/admin/staff/<id>/set_password_link/ — a fresh link, e.g. if the first one expired
+
+    Managers can do everything else an admin can, but never this, and never pay farmers.
+    """
+    permission_classes = [IsSuperAdmin]
+    serializer_class = StaffSerializer
+
+    def get_queryset(self):
+        return User.objects.filter(role=UserRole.ADMIN).order_by("-is_superuser", "first_name", "email")
+
+    def create(self, request, *args, **kwargs):
+        serializer = ManagerCreateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+        link = self._send_link(user, invited_by=request.user)
+        return Response(
+            {"staff": StaffSerializer(user).data, "set_password_link": link},
+            status=status.HTTP_201_CREATED,
+        )
+
+    def _refuse_super_admin(self, user):
+        if user.is_superuser:
+            return Response(
+                {"error": {"code": "forbidden", "message": "The super admin account can't be changed here."}},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
+    @action(detail=True, methods=["post"], url_path="deactivate")
+    def deactivate(self, request, pk=None):
+        user = self.get_object()
+        if (refused := self._refuse_super_admin(user)):
+            return refused
+        user.status = UserStatus.DEACTIVATED
+        user.is_active = False
+        user.save(update_fields=["status", "is_active"])
+        return Response(StaffSerializer(user).data)
+
+    @action(detail=True, methods=["post"], url_path="reactivate")
+    def reactivate(self, request, pk=None):
+        user = self.get_object()
+        if (refused := self._refuse_super_admin(user)):
+            return refused
+        user.status = UserStatus.ACTIVE
+        user.is_active = True
+        user.save(update_fields=["status", "is_active"])
+        return Response(StaffSerializer(user).data)
+
+    @action(detail=True, methods=["post"], url_path="set_password_link")
+    def set_password_link(self, request, pk=None):
+        user = self.get_object()
+        if (refused := self._refuse_super_admin(user)):
+            return refused
+        if not user.is_active:
+            return Response(
+                {"error": {"code": "bad_request", "message": "Reactivate this manager before sending a new link."}},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response({"set_password_link": self._send_link(user, invited_by=request.user)})
+
+    def _send_link(self, user, invited_by):
+        """Email the manager their link (written to the log if email isn't set up) and return it."""
+        import logging
+
+        from django.core.mail import send_mail
+
+        from .password_links import set_password_link
+
+        link = set_password_link(user, portal="admin")
+        body = (
+            f"Hi {user.first_name},\n\n"
+            f"{invited_by.first_name or 'The Vuna Fresh super admin'} has given you a manager account on "
+            f"Vuna Fresh. Choose your password here:\n\n{link}\n\n"
+            "The link works once and expires in 3 days. Then log in on the admin log-in page "
+            "with this email address.\n\n"
+            "Vuna Fresh"
+        )
+        try:
+            send_mail("Your Vuna Fresh manager account", body, None, [user.email])
+        except Exception:
+            logging.getLogger(__name__).exception("Manager invitation email failed for user #%s", user.pk)
+        return link

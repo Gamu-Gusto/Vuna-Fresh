@@ -1,5 +1,7 @@
 from rest_framework.permissions import BasePermission
 
+from apps.users.permissions import IsSuperAdmin  # noqa: F401 — re-exported for payments views
+
 
 class IsAdminUser(BasePermission):
     def has_permission(self, request, view):

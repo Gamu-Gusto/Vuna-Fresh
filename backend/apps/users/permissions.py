@@ -69,6 +69,23 @@ class IsAdminUser(BasePermission):
         )
 
 
+def is_super_admin(user):
+    """
+    The super admin is an admin-role account that is also a Django superuser
+    (the first admin, created with createsuperuser). Every other admin-role
+    account is a manager: it can do everything except manage admin accounts
+    and pay farmers.
+    """
+    return bool(user and user.is_authenticated and user.role == "admin" and user.is_superuser)
+
+
+class IsSuperAdmin(BasePermission):
+    """Allow access only to the super admin (see is_super_admin)."""
+
+    def has_permission(self, request, view):
+        return is_super_admin(request.user)
+
+
 class IsAdminOrReadOnly(BasePermission):
     """Allow full access to admins; read-only to authenticated non-admins."""
 

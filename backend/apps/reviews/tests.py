@@ -189,3 +189,11 @@ class DeliveryJourneyTests(TestCase):
         review = DriverReview.objects.get()
         res = client_for(self.buyer_user).post(f"/api/v1/driver-reviews/{review.id}/set_status/", {"status": "removed"}, format="json")
         self.assertEqual(res.status_code, 403)
+
+    def test_only_super_admin_can_pay_farmers(self):
+        self.deliver()
+        manager = make_admin("manager@test.com", super_admin=False)
+        res = client_for(manager).post(f"/api/v1/payments/payouts/{self.payout.id}/mark_paid/")
+        self.assertEqual(res.status_code, 403)
+        self.payout.refresh_from_db()
+        self.assertEqual(self.payout.status, FarmerPayoutStatus.PENDING)

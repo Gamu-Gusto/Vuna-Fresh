@@ -90,6 +90,11 @@ DATABASES = {
 
 # Custom user model
 AUTH_USER_MODEL = "users.User"
+AUTHENTICATION_BACKENDS = [
+    "django.contrib.auth.backends.ModelBackend",
+    # Managers get Django admin access minus the super admin's reserved powers
+    "apps.users.backends.ManagerPermissionBackend",
+]
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

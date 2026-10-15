@@ -25,6 +25,8 @@ function ResetPasswordForm() {
   const params = useSearchParams();
   const uid = params.get('uid');
   const token = params.get('token');
+  const isAdmin = params.get('for') === 'admin';
+  const loginPages = isAdmin ? [{ href: '/admin/login', label: 'Admin' }] : LOGIN_PAGES;
 
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -64,7 +66,7 @@ function ResetPasswordForm() {
         <div className="space-y-3 text-sm">
           <p className="bg-green-50 border border-green-200 text-green-800 rounded-lg px-4 py-3">Password updated. Log in with your new password:</p>
           <div className="flex gap-3">
-            {LOGIN_PAGES.map(l => (
+            {loginPages.map(l => (
               <Link key={l.href} href={l.href} className="text-brand-green font-medium hover:underline">{l.label} log in</Link>
             ))}
           </div>

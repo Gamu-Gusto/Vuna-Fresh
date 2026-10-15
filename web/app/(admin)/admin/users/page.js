@@ -2,6 +2,7 @@
 
 import { Suspense, useState, useEffect, useCallback } from 'react';
 import { apiClient } from '@/lib/api';
+import { useAuth } from '@/lib/auth-context';
 import StatusText from '@/components/StatusText';
 import { useSearchParams, useRouter } from 'next/navigation';
 
@@ -23,6 +24,8 @@ export default function UsersPage() {
 
 function UsersPageContent() {
   const router = useRouter();
+  // Only the super admin may deactivate admin accounts (managers or itself excluded)
+  const { user: currentUser } = useAuth();
   const searchParams = useSearchParams();
   const [role, setRole] = useState(searchParams.get('role') ?? '');
   const [statusFilter, setStatusFilter] = useState(searchParams.get('status') ?? '');
@@ -181,7 +184,7 @@ function UsersPageContent() {
                     {new Date(u.date_joined).toLocaleDateString('en-ZA')}
                   </td>
                   <td className="px-4 py-3 text-right">
-                    {u.status !== 'deactivated' && (
+                    {u.status !== 'deactivated' && (u.role !== 'admin' || currentUser?.is_super_admin) && u.id !== currentUser?.id && (
                       <button
                         onClick={() => setConfirmDeactivate(u)}
                         className="text-xs text-gray-500 hover:text-ember hover:underline"

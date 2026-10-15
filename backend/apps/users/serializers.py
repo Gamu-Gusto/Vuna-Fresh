@@ -53,14 +53,19 @@ class RegisterSerializer(SignupConsentFields, serializers.ModelSerializer):
 
 class UserSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(read_only=True)
+    # Admin accounts only: the super admin, as opposed to a manager
+    is_super_admin = serializers.SerializerMethodField()
 
     class Meta:
         model = User
         fields = [
             "id", "email", "first_name", "last_name", "full_name",
-            "phone", "role", "status", "date_joined",
+            "phone", "role", "status", "date_joined", "is_super_admin",
         ]
-        read_only_fields = ["id", "email", "role", "status", "date_joined"]
+        read_only_fields = ["id", "email", "role", "status", "date_joined", "is_super_admin"]
+
+    def get_is_super_admin(self, obj):
+        return obj.role == "admin" and obj.is_superuser
 
 
 class AddressSerializer(serializers.ModelSerializer):

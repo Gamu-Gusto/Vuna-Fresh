@@ -20,7 +20,7 @@ from .models import (
     TransactionStatus,
     TransactionType,
 )
-from .permissions import IsAdminOrFarmer, IsAdminUser
+from .permissions import IsAdminOrFarmer, IsAdminUser, IsSuperAdmin
 from .serializers import (
     CommissionSettingsSerializer,
     DirectDepositProofSerializer,
@@ -300,7 +300,7 @@ class FarmerPayoutViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     GET  /api/v1/payments/payouts/               — admin: list payouts (?status=);
                                                      farmer: list own payouts (read-only)
     GET  /api/v1/payments/payouts/pending/        — admin: list pending payouts
-    POST /api/v1/payments/payouts/<id>/mark_paid/ — admin: mark paid, creates the
+    POST /api/v1/payments/payouts/<id>/mark_paid/ — super admin: mark paid, creates the
                                                      farmer_payout Transaction. Manual —
                                                      not automated disbursement. Only
                                                      once the order has been delivered.
@@ -310,6 +310,9 @@ class FarmerPayoutViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     def get_permissions(self):
         if self.action == "list":
             return [IsAuthenticated(), IsAdminOrFarmer()]
+        if self.action == "mark_paid":
+            # Paying farmers is reserved for the super admin; managers can only view
+            return [IsAuthenticated(), IsSuperAdmin()]
         return [IsAuthenticated(), IsAdminUser()]
 
     def get_queryset(self):

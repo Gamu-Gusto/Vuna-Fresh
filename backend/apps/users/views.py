@@ -87,20 +87,16 @@ class PasswordResetRequestView(APIView):
     def post(self, request):
         import logging
 
-        from django.conf import settings
-        from django.contrib.auth.tokens import default_token_generator
         from django.core.mail import send_mail
-        from django.utils.encoding import force_bytes
-        from django.utils.http import urlsafe_base64_encode
+
+        from .password_links import set_password_link
 
         serializer = PasswordResetRequestSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
         user = User.objects.filter(email__iexact=serializer.validated_data["email"], is_active=True).first()
         if user is not None:
-            uid = urlsafe_base64_encode(force_bytes(user.pk))
-            token = default_token_generator.make_token(user)
-            link = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
+            link = set_password_link(user, portal="admin" if user.role == "admin" else None)
             body = (
                 f"Hi {user.first_name or 'there'},\n\n"
                 "Someone asked to reset the password for your Vuna Fresh account. "

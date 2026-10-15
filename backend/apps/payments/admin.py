@@ -67,8 +67,10 @@ class CommissionSettingsAdmin(admin.ModelAdmin):
     readonly_fields = ["created_at"]
 
 
+# Paying a farmer goes through the app (super admin, delivered orders only),
+# which also records the payout transaction, so payouts are view-only here.
 @admin.register(FarmerPayout)
-class FarmerPayoutAdmin(admin.ModelAdmin):
+class FarmerPayoutAdmin(ViewOnlyAdminMixin, admin.ModelAdmin):
     list_display = ["id", "order", "farmer", "gross_amount", "commission_amount", "net_amount", "status", "paid_at"]
     list_filter = ["status"]
     search_fields = ["farmer__farm_name", "order__id"]

@@ -122,3 +122,109 @@ class PasswordResetTests(TestCase):
         self.assertEqual(res.status_code, 400)
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password("Old-Passw0rd!"))
+
+
+class SuperAdminAndManagerTests(TestCase):
+    """
+    The super admin (admin role + superuser) can do everything; a manager (admin
+    role, not superuser) can do everything except manage admin accounts and pay
+    farmers, in the API and in Django admin.
+    """
+
+    def setUp(self):
+        from django.core import mail
+
+        self.mail = mail
+        self.super_admin = User.objects.create_superuser(
+            email="boss@test.com", password="TestPass123!", first_name="Gamu", last_name="D",
+        )
+        self.client = APIClient()
+        self.client.force_authenticate(self.super_admin)
+
+    def add_manager(self, email="manager@test.com"):
+        return self.client.post("/api/v1/admin/staff/", {
+            "email": email, "first_name": "Thabo", "last_name": "M",
+        }, format="json")
+
+    def manager_client(self):
+        manager = User.objects.get(email="manager@test.com")
+        client = APIClient()
+        client.force_authenticate(manager)
+        return client, manager
+
+    def test_super_admin_adds_manager_who_sets_own_password(self):
+        res = self.add_manager()
+        self.assertEqual(res.status_code, 201)
+        manager = User.objects.get(email="manager@test.com")
+        self.assertEqual((manager.role, manager.is_staff, manager.is_superuser), ("admin", True, False))
+        self.assertFalse(manager.has_usable_password())
+        self.assertIn("for=admin", res.data["set_password_link"])
+        self.assertIn("manager@test.com", [m.to[0] for m in self.mail.outbox])
+
+        # The link is a normal password-reset link: following it sets the password
+        from urllib.parse import parse_qs, urlparse
+        params = parse_qs(urlparse(res.data["set_password_link"]).query)
+        res = APIClient().post("/api/v1/auth/password-reset/confirm/", {
+            "uid": params["uid"][0], "token": params["token"][0],
+            "password": "NewPass456!x", "password_confirm": "NewPass456!x",
+        }, format="json")
+        self.assertEqual(res.status_code, 200)
+        res = APIClient().post("/api/v1/auth/token/", {"email": "manager@test.com", "password": "NewPass456!x"}, format="json")
+        self.assertEqual(res.status_code, 200)
+
+    def test_duplicate_email_refused(self):
+        self.add_manager()
+        self.assertEqual(self.add_manager("MANAGER@test.com").status_code, 400)
+
+    def test_me_endpoint_says_who_is_super_admin(self):
+        self.add_manager()
+        manager_client, _ = self.manager_client()
+        self.assertTrue(self.client.get("/api/v1/users/me/").data["is_super_admin"])
+        self.assertFalse(manager_client.get("/api/v1/users/me/").data["is_super_admin"])
+
+    def test_manager_cannot_manage_the_team(self):
+        self.add_manager()
+        manager_client, manager = self.manager_client()
+        self.assertEqual(manager_client.get("/api/v1/admin/staff/").status_code, 403)
+        self.assertEqual(manager_client.post("/api/v1/admin/staff/", {
+            "email": "x@test.com", "first_name": "X", "last_name": "Y",
+        }, format="json").status_code, 403)
+        # Nor deactivate the super admin through the general users page
+        res = manager_client.post(f"/api/v1/admin/users/{self.super_admin.id}/deactivate/")
+        self.assertEqual(res.status_code, 403)
+        self.super_admin.refresh_from_db()
+        self.assertTrue(self.super_admin.is_active)
+
+    def test_manager_still_has_admin_access(self):
+        self.add_manager()
+        manager_client, _ = self.manager_client()
+        self.assertEqual(manager_client.get("/api/v1/admin/users/").status_code, 200)
+        self.assertEqual(manager_client.get("/api/v1/admin/farmers/").status_code, 200)
+        self.assertEqual(manager_client.get("/api/v1/payments/payouts/").status_code, 200)
+
+    def test_super_admin_deactivates_and_reactivates_manager(self):
+        manager_id = self.add_manager().data["staff"]["id"]
+        res = self.client.post(f"/api/v1/admin/staff/{manager_id}/deactivate/")
+        self.assertEqual((res.status_code, res.data["status"]), (200, "deactivated"))
+        self.assertEqual(self.client.post(f"/api/v1/admin/staff/{manager_id}/set_password_link/").status_code, 400)
+        res = self.client.post(f"/api/v1/admin/staff/{manager_id}/reactivate/")
+        self.assertEqual((res.status_code, res.data["status"]), (200, "active"))
+        self.assertIn("token=", self.client.post(f"/api/v1/admin/staff/{manager_id}/set_password_link/").data["set_password_link"])
+
+    def test_super_admin_account_cannot_be_changed_on_team_page(self):
+        res = self.client.post(f"/api/v1/admin/staff/{self.super_admin.id}/deactivate/")
+        self.assertEqual(res.status_code, 403)
+
+    def test_django_admin_permissions(self):
+        self.add_manager()
+        _, manager = self.manager_client()
+        manager = User.objects.get(pk=manager.pk)  # fresh permission cache
+        self.assertTrue(manager.has_perm("products.add_catalogueitem"))
+        self.assertTrue(manager.has_perm("users.change_farmerprofile"))
+        self.assertTrue(manager.has_perm("users.view_user"))
+        for reserved in ("users.add_user", "users.change_user", "payments.change_farmerpayout", "auth.change_group"):
+            self.assertFalse(manager.has_perm(reserved), reserved)
+        self.assertFalse(manager.has_module_perms("auth"))
+        # Ordinary users get nothing from the manager backend
+        buyer = User.objects.create_user(email="b@test.com", password="x", role="customer")
+        self.assertFalse(buyer.has_perm("products.add_catalogueitem"))
