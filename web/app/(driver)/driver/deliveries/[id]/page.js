@@ -109,6 +109,12 @@ export default function DeliveryDetailPage() {
         </div>
       )}
 
+      {order.status === 'preparing' && (
+        <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded p-4">
+          The farm is still packing this order. You&apos;ll get a notification as soon as it&apos;s ready to collect.
+        </div>
+      )}
+
       {/* Status action — shown only when the driver has an available transition */}
       {transition && (
         <div className="bg-brand-green/5 border border-brand-green/20 rounded p-5">

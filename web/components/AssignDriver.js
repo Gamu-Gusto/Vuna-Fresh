@@ -26,9 +26,9 @@ function driverLabel(d) {
 }
 
 /**
- * Driver picker + Assign button for one ready-for-pickup order. The backend
- * only accepts assignment once the farm has marked the order ready for pickup.
- * onAssigned receives the updated order.
+ * Driver picker + Assign button for one order that is being packed or is ready
+ * for pickup (the only statuses the backend accepts). onAssigned receives the
+ * updated order.
  */
 export default function AssignDriver({ order, drivers, onAssigned, compact = false }) {
   const [driverId, setDriverId] = useState(order.driver ? String(order.driver) : '');

@@ -611,3 +611,54 @@ class AdminOrderFilterTests(TestCase):
     def test_filters_do_not_widen_other_roles(self):
         # A driver still only sees their own orders, whatever they ask for
         self.assertEqual(self.ids("?status=ready_for_pickup&has_driver=false", self.driver_profile.user), {self.assigned.id, self.on_road.id})
+
+
+class EarlyDriverAssignmentTests(TestCase):
+    """Admins can line up a driver while the farm is packing; collection waits for 'ready'."""
+
+    def setUp(self):
+        _, buyer_profile, address = make_buyer("customer@test.com")
+        self.farmer_user, farmer_profile = make_farmer("farmer@test.com")
+        self.driver_user, self.driver_profile = make_driver("driver@test.com")
+        self.admin = APIClient()
+        self.admin.force_authenticate(make_admin("admin@test.com"))
+        self.order = Order.objects.create(
+            buyer=buyer_profile, delivery_address=address, status=OrderStatus.PREPARING,
+            subtotal=Decimal("10.00"), total=Decimal("10.00"),
+        )
+        OrderItem.objects.create(
+            order=self.order, product=make_product(farmer_profile), farmer=farmer_profile,
+            quantity=1, price_at_purchase=Decimal("10.00"),
+        )
+        mark_paid(self.order)
+
+    def assign(self):
+        return self.admin.post(
+            f"/api/v1/orders/{self.order.id}/assign_driver/", {"driver_id": self.driver_profile.id}, format="json",
+        )
+
+    def test_assign_while_packing_then_collect_once_ready(self):
+        from apps.notifications.models import Notification
+
+        self.assertEqual(self.assign().status_code, 200)
+        self.assertIn("still packing", Notification.objects.get(user=self.driver_user, type="delivery_assigned").message)
+
+        driver = APIClient()
+        driver.force_authenticate(self.driver_user)
+        self.assertEqual([o["id"] for o in driver.get("/api/v1/orders/").data["results"]], [self.order.id])
+        # Can't set off before the farm has packed it
+        res = driver.post(f"/api/v1/orders/{self.order.id}/update_status/", {"status": "out_for_delivery"}, format="json")
+        self.assertEqual(res.status_code, 400)
+
+        farmer = APIClient()
+        farmer.force_authenticate(self.farmer_user)
+        res = farmer.post(f"/api/v1/orders/{self.order.id}/update_status/", {"status": "ready_for_pickup"}, format="json")
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(Notification.objects.filter(user=self.driver_user, type="delivery_ready").exists())
+        res = driver.post(f"/api/v1/orders/{self.order.id}/update_status/", {"status": "out_for_delivery"}, format="json")
+        self.assertEqual(res.status_code, 200)
+
+    def test_cannot_assign_before_packing_or_after_setting_off(self):
+        for status in (OrderStatus.PLACED, OrderStatus.OUT_FOR_DELIVERY, OrderStatus.DELIVERED):
+            Order.objects.filter(pk=self.order.pk).update(status=status)
+            self.assertEqual(self.assign().status_code, 400, status)

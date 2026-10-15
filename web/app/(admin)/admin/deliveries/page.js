@@ -8,7 +8,8 @@ import { Panel } from '@/components/dashboard/widgets';
 
 // The delivery board: packed orders waiting for a driver first, then orders a
 // driver hasn't collected yet (driver can still be changed), orders on the
-// road, and orders the farms are still packing, so drivers can be planned.
+// road, and orders the farms are still packing, which can be given a driver
+// early so the route can be planned.
 const LISTS = {
   needsDriver: '?status=ready_for_pickup&has_driver=false',
   assigned: '?status=ready_for_pickup&has_driver=true',
@@ -28,13 +29,16 @@ export default function AdminDeliveriesPage() {
       .catch(() => setError('Could not load deliveries. Check your connection and try again.'));
   }, []);
 
-  // Assigning moves the order from "needs a driver" to "assigned"
+  // Assigning a packed order moves it from "needs a driver" to "assigned";
+  // an order still being packed stays in its list, now showing its driver.
   function onAssigned(updated) {
-    setLists(l => ({
-      ...l,
-      needsDriver: l.needsDriver.filter(o => o.id !== updated.id),
-      assigned: [updated, ...l.assigned.filter(o => o.id !== updated.id)],
-    }));
+    setLists(l => (updated.status === 'preparing'
+      ? { ...l, packing: l.packing.map(o => (o.id === updated.id ? updated : o)) }
+      : {
+        ...l,
+        needsDriver: l.needsDriver.filter(o => o.id !== updated.id),
+        assigned: [updated, ...l.assigned.filter(o => o.id !== updated.id)],
+      }));
   }
 
   if (error) return <p className="py-20 text-center text-sm text-ember">{error}</p>;
@@ -50,7 +54,8 @@ export default function AdminDeliveriesPage() {
       <div>
         <h1 className="text-2xl font-bold text-navy">Deliveries</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Assign a driver as soon as a farm marks an order ready for pickup. The driver sees it on their dashboard straight away.
+          Assign a driver once a farm marks an order ready, or earlier while it&apos;s being packed. The driver sees it on their
+          dashboard straight away and is told when it&apos;s ready to collect.
         </p>
       </div>
       {driversError && <p className="text-sm text-ember">{driversError}</p>}
@@ -85,31 +90,33 @@ export default function AdminDeliveriesPage() {
         )}
       </Panel>
 
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Panel title={`On the road (${lists.onTheRoad.length})`}>
-          {lists.onTheRoad.length === 0 ? <Empty text="No orders are out for delivery." /> : (
-            <ul className="divide-y divide-[#EEF1EC] -my-2">
-              {lists.onTheRoad.map(order => (
-                <li key={order.id} className="py-3">
-                  <OrderSummary order={order} detail={`With ${driverName(order.driver)}`} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
+      <Panel title={`Being packed (${lists.packing.length})`}>
+        {lists.packing.length === 0 ? <Empty text="No farms are packing orders right now." /> : (
+          <ul className="divide-y divide-[#EEF1EC] -my-2">
+            {lists.packing.map(order => (
+              <li key={order.id} className="py-3 grid gap-3 md:grid-cols-[1fr_minmax(0,24rem)] md:items-center">
+                <OrderSummary
+                  order={order}
+                  detail={order.driver ? `Assigned early to ${driverName(order.driver)}` : 'You can line up a driver now'}
+                />
+                <AssignDriver order={order} drivers={drivers} onAssigned={onAssigned} compact />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
 
-        <Panel title={`Being packed (${lists.packing.length})`}>
-          {lists.packing.length === 0 ? <Empty text="No farms are packing orders right now." /> : (
-            <ul className="divide-y divide-[#EEF1EC] -my-2">
-              {lists.packing.map(order => (
-                <li key={order.id} className="py-3">
-                  <OrderSummary order={order} detail="You can assign a driver once the farm marks it ready" />
-                </li>
-              ))}
-            </ul>
-          )}
-        </Panel>
-      </div>
+      <Panel title={`On the road (${lists.onTheRoad.length})`}>
+        {lists.onTheRoad.length === 0 ? <Empty text="No orders are out for delivery." /> : (
+          <ul className="divide-y divide-[#EEF1EC] -my-2">
+            {lists.onTheRoad.map(order => (
+              <li key={order.id} className="py-3">
+                <OrderSummary order={order} detail={`With ${driverName(order.driver)}`} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </Panel>
     </div>
   );
 }

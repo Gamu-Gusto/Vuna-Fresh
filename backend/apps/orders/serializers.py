@@ -294,8 +294,13 @@ class OrderStatusUpdateSerializer(serializers.Serializer):
     status = serializers.ChoiceField(choices=OrderStatus.choices)
 
 
+# A driver can be lined up while the farm is still packing, and changed until
+# they set off. They can only collect once the farm marks the order ready.
+ASSIGNABLE_STATUSES = (OrderStatus.PREPARING, OrderStatus.READY_FOR_PICKUP)
+
+
 class DriverAssignSerializer(serializers.Serializer):
-    """Admin-only. Assigns a driver to an order that is in 'ready_for_pickup' status."""
+    """Admin-only. Assigns a driver to an order that is being packed or is ready for pickup."""
     driver_id = serializers.IntegerField()
 
     def validate_driver_id(self, value):
@@ -309,10 +314,10 @@ class DriverAssignSerializer(serializers.Serializer):
 
     def validate(self, attrs):
         order = self.context["order"]
-        if order.status != OrderStatus.READY_FOR_PICKUP:
+        if order.status not in ASSIGNABLE_STATUSES:
             raise serializers.ValidationError(
-                f"A driver can only be assigned to an order in 'ready_for_pickup' status "
-                f"(current status: '{order.status}')."
+                "A driver can only be assigned while the farm is packing the order or once it's "
+                f"ready for pickup (current status: '{order.status}')."
             )
         return attrs
 

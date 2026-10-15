@@ -59,11 +59,20 @@ def notify_status_changed(order):
             order.buyer.user, "order_status_changed", template.format(id=order.id),
             NotificationCategory.ORDER_UPDATES, link="/orders",
         )
+    # A driver assigned while the farm was packing hears when it's ready to collect
+    if order.status == OrderStatus.READY_FOR_PICKUP and order.driver_id:
+        notify(
+            order.driver.user, "delivery_ready",
+            f"Order #{order.id} is packed and ready for you to collect.",
+            NotificationCategory.ORDER_UPDATES, link=f"/driver/deliveries/{order.id}",
+        )
 
 
 def notify_driver_assigned(order):
+    still_packing = order.status == OrderStatus.PREPARING
     notify(
         order.driver.user, "delivery_assigned",
-        f"You've been assigned delivery for order #{order.id}.",
+        f"You've been assigned delivery for order #{order.id}."
+        + (" The farm is still packing it: you'll be told when it's ready to collect." if still_packing else ""),
         NotificationCategory.ORDER_UPDATES, link=f"/driver/deliveries/{order.id}",
     )

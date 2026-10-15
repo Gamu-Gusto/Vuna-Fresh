@@ -57,7 +57,7 @@ export default function AdminOrderDetailPage() {
         )}
       </div>
 
-      {order.status === 'ready_for_pickup' && <AssignDriverPanel order={order} onAssigned={setOrder} />}
+      {['preparing', 'ready_for_pickup'].includes(order.status) && <AssignDriverPanel order={order} onAssigned={setOrder} />}
 
       {/* Items grouped by farm */}
       <div className="bg-white rounded border border-hairline p-5">
@@ -125,7 +125,8 @@ function Detail({ label, value }) {
   );
 }
 
-// Ready-for-pickup orders need a driver before they can go out for delivery.
+// Orders need a driver before they can go out for delivery. One can be lined
+// up while the farm is still packing; they collect once it's marked ready.
 function AssignDriverPanel({ order, onAssigned }) {
   const { drivers, error } = useApprovedDrivers();
   return (

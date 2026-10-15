@@ -59,6 +59,7 @@ export default function DriverDashboard() {
   if (!data) return <DashboardLoading />;
 
   const { profile, orders, ratings } = data;
+  const upcoming = orders.filter(o => o.status === 'preparing'); // assigned early, farm still packing
   const toCollect = orders.filter(o => o.status === 'ready_for_pickup');
   const onTheRoad = orders.filter(o => o.status === 'out_for_delivery');
   const delivered = orders.filter(o => o.status === 'delivered');
@@ -68,7 +69,7 @@ export default function DriverDashboard() {
     <DashboardGrid
       main={
         <>
-          <DriverHero toCollect={toCollect} onTheRoad={onTheRoad} />
+          <DriverHero toCollect={toCollect} onTheRoad={onTheRoad} upcoming={upcoming} />
 
           <StatRow>
             <StatTile icon="box" label="To collect" value={toCollect.length} tone={toCollect.length ? 'attention' : 'normal'} />
@@ -82,6 +83,13 @@ export default function DriverDashboard() {
               empty="No active deliveries. New ones appear here as soon as the team assigns them to you."
             />
           </Panel>
+
+          {upcoming.length > 0 && (
+            <Panel title="Coming up">
+              <p className="text-sm text-gray-500 -mt-2 mb-3">The farm is still packing these. You&apos;ll be told when each one is ready to collect.</p>
+              <DeliveryTable orders={upcoming} empty="" />
+            </Panel>
+          )}
 
           <Panel title="Completed deliveries">
             <DeliveryTable orders={delivered.slice(0, 5)} empty="Deliveries you complete will be listed here." />
@@ -111,7 +119,7 @@ export default function DriverDashboard() {
   );
 }
 
-function DriverHero({ toCollect, onTheRoad }) {
+function DriverHero({ toCollect, onTheRoad, upcoming }) {
   if (onTheRoad.length > 0) {
     const order = onTheRoad[0];
     return (
@@ -130,6 +138,17 @@ function DriverHero({ toCollect, onTheRoad }) {
         kicker="Ready for pickup"
         title={toCollect.length === 1 ? `Collect order #${order.id}` : `${toCollect.length} orders to collect`}
         body="The farms have packed these orders. Open one to see the pickup stops and where it's going."
+        action={{ href: `/driver/deliveries/${order.id}`, label: 'See pickup stops' }}
+      />
+    );
+  }
+  if (upcoming.length > 0) {
+    const order = upcoming[0];
+    return (
+      <HeroBanner
+        kicker="Coming up"
+        title={upcoming.length === 1 ? `Order #${order.id} is being packed` : `${upcoming.length} orders being packed`}
+        body="You've been lined up to deliver. You'll be told as soon as the farm marks it ready to collect."
         action={{ href: `/driver/deliveries/${order.id}`, label: 'See pickup stops' }}
       />
     );
