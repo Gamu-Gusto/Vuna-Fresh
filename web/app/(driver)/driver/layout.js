@@ -4,9 +4,29 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import AuthHeader from '@/components/AuthHeader';
-import DriverNav from '@/components/DriverNav';
+import DashboardShell from '@/components/dashboard/DashboardShell';
 
 const PUBLIC_PATHS = ['/driver/login', '/driver/signup'];
+
+const SECTIONS = [
+  {
+    label: 'Menu',
+    items: [
+      { href: '/driver/dashboard', label: 'Deliveries', icon: 'truck', match: ['/driver/deliveries'] },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [
+      { href: '/driver/support', label: 'Support', icon: 'chat' },
+      { href: '/driver/privacy', label: 'Privacy', icon: 'shield' },
+    ],
+  },
+];
+
+const SHORTCUTS = [
+  { href: '/driver/notifications', label: 'Notifications', icon: 'bell' },
+];
 
 export default function DriverLayout({ children }) {
   const { user, loading } = useAuth();
@@ -45,14 +65,15 @@ export default function DriverLayout({ children }) {
   if (!user || user.role !== 'driver') return null;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <DriverNav />
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
-        {children}
-      </main>
-      <footer className="text-center text-xs text-gray-400 py-6">
-        © 2026 Vuna Fresh. From the farm to your Home.
-      </footer>
-    </div>
+    <DashboardShell
+      sections={SECTIONS}
+      shortcuts={SHORTCUTS}
+      notificationsHref="/driver/notifications"
+      supportHref="/driver/support"
+      loginHref="/driver/login"
+      roleLabel="Driver"
+    >
+      {children}
+    </DashboardShell>
   );
 }

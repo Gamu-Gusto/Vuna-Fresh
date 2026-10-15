@@ -4,9 +4,35 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import AuthHeader from '@/components/AuthHeader';
-import FarmerNav from '@/components/FarmerNav';
+import DashboardShell from '@/components/dashboard/DashboardShell';
 
 const PUBLIC_PATHS = ['/farmer/login', '/farmer/signup'];
+
+const SECTIONS = [
+  {
+    label: 'Menu',
+    items: [
+      { href: '/farmer/dashboard', label: 'Dashboard', icon: 'home' },
+      { href: '/farmer/inventory', label: 'Products', icon: 'sprout' },
+      { href: '/farmer/orders', label: 'Orders', icon: 'basket' },
+      { href: '/farmer/payouts', label: 'Payouts', icon: 'wallet' },
+      { href: '/farmer/reviews', label: 'Reviews', icon: 'star' },
+    ],
+  },
+  {
+    label: 'Account',
+    items: [
+      { href: '/farmer/profile', label: 'Farm profile', icon: 'user' },
+      { href: '/farmer/support', label: 'Support', icon: 'chat' },
+      { href: '/farmer/privacy', label: 'Privacy', icon: 'shield' },
+    ],
+  },
+];
+
+const SHORTCUTS = [
+  { href: '/farmer/inventory/new', label: 'Add a product', icon: 'plus' },
+  { href: '/farmer/notifications', label: 'Notifications', icon: 'bell' },
+];
 
 export default function FarmerLayout({ children }) {
   const { user, loading } = useAuth();
@@ -45,14 +71,15 @@ export default function FarmerLayout({ children }) {
   if (!user || user.role !== 'farmer') return null;
 
   return (
-    <div className="min-h-screen flex flex-col">
-      <FarmerNav />
-      <main className="flex-1 max-w-6xl mx-auto w-full px-4 py-8">
-        {children}
-      </main>
-      <footer className="text-center text-xs text-gray-400 py-6">
-        © 2026 Vuna Fresh. From the farm to your Home.
-      </footer>
-    </div>
+    <DashboardShell
+      sections={SECTIONS}
+      shortcuts={SHORTCUTS}
+      notificationsHref="/farmer/notifications"
+      supportHref="/farmer/support"
+      loginHref="/farmer/login"
+      roleLabel="Farmer"
+    >
+      {children}
+    </DashboardShell>
   );
 }

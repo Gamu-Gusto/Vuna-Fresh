@@ -4,9 +4,40 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
 import AuthHeader from '@/components/AuthHeader';
-import AdminNav from '@/components/AdminNav';
+import DashboardShell from '@/components/dashboard/DashboardShell';
 
 const PUBLIC_PATHS = ['/admin/login'];
+
+const SECTIONS = [
+  {
+    label: 'Overview',
+    items: [
+      { href: '/admin/dashboard', label: 'Dashboard', icon: 'home' },
+      { href: '/admin/orders', label: 'Orders', icon: 'basket' },
+    ],
+  },
+  {
+    label: 'Money',
+    items: [
+      { href: '/admin/payments', label: 'Payments to verify', icon: 'banknote' },
+      { href: '/admin/payouts', label: 'Farmer payouts', icon: 'wallet' },
+      { href: '/admin/invoices', label: 'Invoices', icon: 'receipt' },
+    ],
+  },
+  {
+    label: 'People',
+    items: [
+      { href: '/admin/approvals', label: 'Approvals', icon: 'check' },
+      { href: '/admin/users', label: 'Users', icon: 'users' },
+      { href: '/admin/support', label: 'Support', icon: 'chat' },
+      { href: '/admin/privacy', label: 'Privacy requests', icon: 'shield' },
+    ],
+  },
+];
+
+const SHORTCUTS = [
+  { href: '/admin/notifications', label: 'Notifications', icon: 'bell' },
+];
 
 export default function AdminLayout({ children }) {
   const { user, loading } = useAuth();
@@ -45,11 +76,15 @@ export default function AdminLayout({ children }) {
   if (!user || user.role !== 'admin') return null;
 
   return (
-    <div className="min-h-screen flex flex-col bg-gray-50">
-      <AdminNav />
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
-        {children}
-      </main>
-    </div>
+    <DashboardShell
+      sections={SECTIONS}
+      shortcuts={SHORTCUTS}
+      notificationsHref="/admin/notifications"
+      supportHref="/admin/support"
+      loginHref="/admin/login"
+      roleLabel="Admin"
+    >
+      {children}
+    </DashboardShell>
   );
 }
