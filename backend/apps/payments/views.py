@@ -302,7 +302,8 @@ class FarmerPayoutViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
     GET  /api/v1/payments/payouts/pending/        — admin: list pending payouts
     POST /api/v1/payments/payouts/<id>/mark_paid/ — admin: mark paid, creates the
                                                      farmer_payout Transaction. Manual —
-                                                     not automated disbursement.
+                                                     not automated disbursement. Only
+                                                     once the order has been delivered.
     """
     serializer_class = FarmerPayoutSerializer
 
@@ -329,25 +330,40 @@ class FarmerPayoutViewSet(mixins.ListModelMixin, viewsets.GenericViewSet):
 
     @action(detail=True, methods=["post"], url_path="mark_paid")
     def mark_paid(self, request, pk=None):
-        payout = self.get_object()
-        if payout.status == FarmerPayoutStatus.PAID:
-            return Response(
-                {"error": {"code": "bad_request", "message": "This payout has already been marked as paid."}},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        from apps.orders.models import OrderStatus
 
-        payout_transaction = Transaction.objects.create(
-            order=payout.order,
-            user=payout.farmer.user,
-            provider=TransactionProvider.INTERNAL,
-            type=TransactionType.FARMER_PAYOUT,
-            amount=payout.net_amount,
-            status=TransactionStatus.COMPLETED,
-        )
-        payout.transaction = payout_transaction
-        payout.status = FarmerPayoutStatus.PAID
-        payout.paid_at = timezone.now()
-        payout.save(update_fields=["transaction", "status", "paid_at"])
+        with db_transaction.atomic():
+            # Lock the row so the same payout can't be marked paid twice at once
+            payout = FarmerPayout.objects.select_for_update().select_related(
+                "order", "farmer__user"
+            ).get(pk=self.get_object().pk)
+            if payout.status == FarmerPayoutStatus.PAID:
+                return Response(
+                    {"error": {"code": "bad_request", "message": "This payout has already been marked as paid."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            # Farmers are paid only for orders that actually reached the buyer
+            if payout.order.status != OrderStatus.DELIVERED:
+                return Response(
+                    {"error": {"code": "bad_request", "message": (
+                        f"Order #{payout.order_id} hasn't been delivered yet. Farmers are paid "
+                        f"once the driver confirms delivery."
+                    )}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            payout_transaction = Transaction.objects.create(
+                order=payout.order,
+                user=payout.farmer.user,
+                provider=TransactionProvider.INTERNAL,
+                type=TransactionType.FARMER_PAYOUT,
+                amount=payout.net_amount,
+                status=TransactionStatus.COMPLETED,
+            )
+            payout.transaction = payout_transaction
+            payout.status = FarmerPayoutStatus.PAID
+            payout.paid_at = timezone.now()
+            payout.save(update_fields=["transaction", "status", "paid_at"])
 
         return Response(FarmerPayoutSerializer(payout).data)
 

@@ -10,6 +10,7 @@ from .models import (
     DirectDepositProof,
     DirectDepositProofStatus,
     FarmerPayout,
+    FarmerPayoutStatus,
     PaymentMethod,
     Transaction,
     TransactionStatus,
@@ -172,14 +173,20 @@ class DirectDepositReviewSerializer(serializers.Serializer):
 class FarmerPayoutSerializer(serializers.ModelSerializer):
     farm_name = serializers.CharField(source="farmer.farm_name", read_only=True)
     order_id = serializers.IntegerField(source="order.id", read_only=True)
+    order_status = serializers.CharField(source="order.status", read_only=True)
+    # A pending payout can be paid only once its order has been delivered
+    ready_to_pay = serializers.SerializerMethodField()
 
     class Meta:
         model = FarmerPayout
         fields = [
-            "id", "order_id", "farmer", "farm_name", "gross_amount", "commission_amount",
-            "net_amount", "status", "transaction", "created_at", "paid_at",
+            "id", "order_id", "order_status", "farmer", "farm_name", "gross_amount", "commission_amount",
+            "net_amount", "status", "ready_to_pay", "transaction", "created_at", "paid_at",
         ]
         read_only_fields = fields
+
+    def get_ready_to_pay(self, obj):
+        return obj.status == FarmerPayoutStatus.PENDING and obj.order.status == OrderStatus.DELIVERED
 
 
 class CommissionSettingsSerializer(serializers.ModelSerializer):
