@@ -1,5 +1,13 @@
+import logging
+import os
+import uuid
+
 from django.conf import settings
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+from config.private_storage import private_storage
 
 
 class PaymentMethodType(models.TextChoices):
@@ -108,6 +116,11 @@ class DirectDepositProofStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
+def deposit_proof_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or ".pdf"
+    return f"deposit-proofs/{uuid.uuid4()}{ext}"
+
+
 class DirectDepositProof(models.Model):
     transaction = models.ForeignKey(
         Transaction,
@@ -119,7 +132,11 @@ class DirectDepositProof(models.Model):
         on_delete=models.CASCADE,
         related_name="uploaded_deposit_proofs",
     )
-    file_url = models.URLField()
+    # Private storage: shows names and bank details, so it never gets a public
+    # link. Admins and the uploader open it through .../deposit-proofs/<id>/file/.
+    file = models.FileField(storage=private_storage, upload_to=deposit_proof_path, blank=True)
+    # Public link used before proofs moved to private storage; empty for new proofs
+    file_url = models.URLField(blank=True)
     bank_reference_number = models.CharField(
         max_length=100,
         help_text="The reference the buyer was told to use, so it can be matched to their bank statement.",
@@ -215,3 +232,12 @@ class FarmerPayout(models.Model):
 
     def __str__(self):
         return f"FarmerPayout(order={self.order_id}, farmer={self.farmer_id}, {self.status})"
+
+
+@receiver(post_delete, sender=DirectDepositProof)
+def delete_deposit_proof_file(sender, instance, **kwargs):
+    if instance.file:
+        try:
+            instance.file.delete(save=False)
+        except Exception:  # the row is gone either way; don't fail the request over the file
+            logging.getLogger(__name__).exception("Could not delete deposit proof file %s", instance.file.name)

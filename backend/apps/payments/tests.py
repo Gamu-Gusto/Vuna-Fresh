@@ -5,7 +5,8 @@ Covers:
 - PayFast is refused while PAYFAST_ENABLED is off
 - Re-initiating a direct deposit reuses the open transaction and reference
 - Credit-terms and already-paid orders can't be paid again
-- Proof upload: file validation, one pending proof per transaction
+- Proof upload: file validation, one pending proof per transaction, private
+  storage (only admins and the uploader can open it; admin views are logged)
 - Admin approve marks the order paid; reject lets the buyer start over
 - Approving needs the funds confirmed on the bank statement: amount (at least
   what's due), date, reference and an explicit "funds cleared" confirmation;
@@ -32,6 +33,7 @@ MEDIA_ROOT = tempfile.mkdtemp()
 
 @override_settings(
     MEDIA_ROOT=MEDIA_ROOT,
+    PRIVATE_MEDIA_ROOT=MEDIA_ROOT,
     DEFAULT_FILE_STORAGE="django.core.files.storage.FileSystemStorage",
     PAYFAST_ENABLED=False,
 )
@@ -61,11 +63,11 @@ class DirectDepositFlowTests(TestCase):
             "/api/v1/payments/initiate/", {"order_id": self.order.id, "provider": provider}, format="json",
         )
 
-    def submit_proof(self, txn_id, reference):
+    def submit_proof(self, txn_id, reference, file=None):
+        file = file or SimpleUploadedFile("proof.pdf", b"%PDF-1.4 proof", content_type="application/pdf")
         return self.client.post("/api/v1/payments/deposit-proofs/", {
-            "transaction": txn_id, "file_url": "http://localhost/media/deposit-proofs/x.pdf",
-            "bank_reference_number": reference,
-        }, format="json")
+            "transaction": txn_id, "file": file, "bank_reference_number": reference,
+        }, format="multipart")
 
     def approve(self, admin_client, proof, **overrides):
         body = {
@@ -112,14 +114,41 @@ class DirectDepositFlowTests(TestCase):
         self.assertEqual(self.order_payment()["status"], "credit")
 
     def test_upload_rejects_wrong_file_type(self):
+        payment = self.initiate().data
         bad = SimpleUploadedFile("x.exe", b"MZ", content_type="application/octet-stream")
-        res = self.client.post("/api/v1/payments/deposit-proofs/upload/", {"file": bad}, format="multipart")
+        res = self.submit_proof(payment["transaction"]["id"], payment["payment"]["reference"], bad)
         self.assertEqual(res.status_code, 400)
+        self.assertIn("file", res.data["error"]["detail"])
 
-        good = SimpleUploadedFile("proof.pdf", b"%PDF-1.4", content_type="application/pdf")
-        res = self.client.post("/api/v1/payments/deposit-proofs/upload/", {"file": good}, format="multipart")
+    def test_proof_file_is_private(self):
+        from apps.privacy.models import DataAccessAuditLog
+
+        payment = self.initiate().data
+        proof = self.submit_proof(payment["transaction"]["id"], payment["payment"]["reference"]).data
+        self.assertTrue(proof["has_file"])
+        self.assertEqual(proof["file_url"], "")
+        self.assertNotIn("file", proof)
+        url = f"/api/v1/payments/deposit-proofs/{proof['id']}/file/"
+
+        # The buyer can open their own proof; another buyer can't; nobody without logging in
+        res = self.client.get(url)
         self.assertEqual(res.status_code, 200)
-        self.assertIn("/deposit-proofs/", res.data["url"])
+        self.assertEqual(b"".join(res.streaming_content), b"%PDF-1.4 proof")
+        res.close()
+        self.assertEqual(res["Cache-Control"], "private, no-store")
+        other, _, _ = make_buyer("other@test.com")
+        other_client = APIClient()
+        other_client.force_authenticate(other)
+        self.assertEqual(other_client.get(url).status_code, 404)
+        self.assertEqual(APIClient().get(url).status_code, 401)
+        self.assertFalse(DataAccessAuditLog.objects.exists())
+
+        # An admin can, and that's logged against the buyer
+        res = self.admin_client().get(url)
+        self.assertEqual(res.status_code, 200)
+        res.close()
+        log = DataAccessAuditLog.objects.get()
+        self.assertEqual((log.user, log.accessed_by.email), (self.buyer, "admin@test.com"))
 
     def test_only_one_pending_proof_per_transaction(self):
         payment = self.initiate().data

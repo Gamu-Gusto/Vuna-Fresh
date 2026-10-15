@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { apiClient, openPrivateFile } from '@/lib/api';
 
 // Payment review for EFT / direct deposit orders. The buyer's uploaded proof is
 // only a notice: an order is marked paid (releasing it to the farmers and
@@ -106,9 +106,20 @@ export default function AdminPaymentsPage() {
                       {refMismatch && <span className="ml-1 text-xs text-amber-700">(doesn&apos;t match)</span>}
                     </p>
                     <p className="text-xs text-gray-400">Submitted {new Date(p.created_at).toLocaleString('en-ZA')}</p>
-                    <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="inline-block text-sm text-brand-green font-medium hover:underline">
-                      View proof of payment ↗
-                    </a>
+                    {p.has_file ? (
+                      <button
+                        type="button"
+                        onClick={() => openPrivateFile(`/payments/deposit-proofs/${p.id}/file/`).catch(err => setActionError(err.message))}
+                        className="inline-block text-sm text-brand-green font-medium hover:underline"
+                      >
+                        View proof of payment ↗
+                      </button>
+                    ) : p.file_url ? (
+                      // Proofs uploaded before private storage
+                      <a href={p.file_url} target="_blank" rel="noopener noreferrer" className="inline-block text-sm text-brand-green font-medium hover:underline">
+                        View proof of payment ↗
+                      </a>
+                    ) : null}
                   </div>
 
                   {!rejecting && !confirming && (

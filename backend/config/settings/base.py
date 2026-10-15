@@ -183,6 +183,12 @@ AWS_S3_FILE_OVERWRITE = False
 AWS_S3_CUSTOM_DOMAIN = _storage_env("PUBLIC_DOMAIN") or None
 AWS_QUERYSTRING_AUTH = AWS_S3_CUSTOM_DOMAIN is None
 
+# Sensitive uploads (proofs of payment, driver documents) go to a separate
+# PRIVATE bucket on the same account, never the public one: see
+# config/private_storage.py. Without it they're kept on local disk, unserved.
+PRIVATE_STORAGE_BUCKET_NAME = env("STORAGE_PRIVATE_BUCKET_NAME", default="")
+PRIVATE_MEDIA_ROOT = BASE_DIR / "private_media"
+
 # ── PayFast ───────────────────────────────────────────────────────────────────
 # Credentials never touch the frontend — the backend builds the signed redirect
 # form fields server-side and hands the frontend only process_url + fields.

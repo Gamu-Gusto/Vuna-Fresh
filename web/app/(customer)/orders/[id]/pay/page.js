@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useParams } from 'next/navigation';
 import { useAuth } from '@/lib/auth-context';
-import { apiClient, uploadFile } from '@/lib/api';
+import { apiClient, postForm } from '@/lib/api';
 import Spinner from '@/components/Spinner';
 import ErrorMessage from '@/components/ErrorMessage';
 import BankDetails from '@/components/BankDetails';
@@ -55,10 +55,10 @@ export default function PayOrderPage() {
     setSubmitError('');
     setSubmitting(true);
     try {
-      const { url } = await uploadFile('/payments/deposit-proofs/upload/', file);
-      await apiClient.post('/payments/deposit-proofs/', {
+      // One request: the file goes straight to private storage with the proof
+      await postForm('/payments/deposit-proofs/', {
         transaction: transactionId,
-        file_url: url,
+        file,
         bank_reference_number: bankReference.trim() || payment.reference,
       });
       setOrder(o => ({ ...o, payment: { ...o.payment, status: 'proof_submitted' } }));

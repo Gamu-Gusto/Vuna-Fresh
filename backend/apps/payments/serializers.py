@@ -75,6 +75,9 @@ class InitiatePaymentSerializer(serializers.Serializer):
 
 
 class DirectDepositProofSerializer(serializers.ModelSerializer):
+    # Uploaded with the proof itself (multipart); stored privately, never echoed back
+    file = serializers.FileField(write_only=True)
+    has_file = serializers.SerializerMethodField()
     order_id = serializers.IntegerField(source="transaction.order_id", read_only=True)
     amount = serializers.DecimalField(source="transaction.amount", max_digits=12, decimal_places=2, read_only=True)
     expected_reference = serializers.CharField(source="transaction.provider_reference", read_only=True)
@@ -84,14 +87,25 @@ class DirectDepositProofSerializer(serializers.ModelSerializer):
         model = DirectDepositProof
         fields = [
             "id", "transaction", "order_id", "amount", "expected_reference", "uploaded_by_email",
-            "file_url", "bank_reference_number",
+            "file", "has_file", "file_url", "bank_reference_number",
             "status", "reviewed_by", "reviewed_at", "notes",
             "amount_received", "received_on", "bank_statement_reference", "created_at",
         ]
         read_only_fields = [
-            "id", "status", "reviewed_by", "reviewed_at",
+            "id", "file_url", "status", "reviewed_by", "reviewed_at",
             "amount_received", "received_on", "bank_statement_reference", "created_at",
         ]
+
+    def get_has_file(self, obj):
+        return bool(obj.file)
+
+    def validate_file(self, value):
+        from .services.proof_files import InvalidProofFileError, validate_proof_file
+        try:
+            validate_proof_file(value)
+        except InvalidProofFileError as e:
+            raise serializers.ValidationError(str(e))
+        return value
 
     def validate_transaction(self, value):
         request = self.context["request"]

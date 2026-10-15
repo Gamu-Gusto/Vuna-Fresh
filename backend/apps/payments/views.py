@@ -1,9 +1,11 @@
-from django.core.files.storage import default_storage
+import mimetypes
+import os
+
 from django.db import transaction as db_transaction
 from django.utils import timezone
 from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
-from rest_framework.parsers import MultiPartParser
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -30,7 +32,6 @@ from .serializers import (
     PaymentMethodSerializer,
     TransactionSerializer,
 )
-from .services.proof_files import InvalidProofFileError, save_proof_file
 from .services.registry import get_provider
 from .services.transactions import mark_payment_completed, mark_payment_failed
 
@@ -150,14 +151,16 @@ class DirectDepositProofViewSet(
 ):
     """
     GET  /api/v1/payments/deposit-proofs/            — list own proofs (admin: all)
-    POST /api/v1/payments/deposit-proofs/             — buyer uploads proof against their transaction
+    POST /api/v1/payments/deposit-proofs/             — buyer uploads proof (multipart: transaction,
+                                                         bank_reference_number, file) against their transaction
     GET  /api/v1/payments/deposit-proofs/<id>/        — detail
-    POST /api/v1/payments/deposit-proofs/upload/      — multipart file upload, returns {url} for file_url
+    GET  /api/v1/payments/deposit-proofs/<id>/file/   — the proof file itself: admins and the uploader only
     GET  /api/v1/payments/deposit-proofs/pending/     — admin-only: proofs awaiting review
     POST /api/v1/payments/deposit-proofs/<id>/review/ — admin-only: approve or reject
     """
     permission_classes = [IsAuthenticated]
     serializer_class = DirectDepositProofSerializer
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
 
     def get_queryset(self):
         qs = DirectDepositProof.objects.select_related("transaction", "uploaded_by", "reviewed_by")
@@ -183,23 +186,26 @@ class DirectDepositProofViewSet(
             NotificationCategory.ORDER_UPDATES, link="/admin/payments",
         )
 
-    @action(detail=False, methods=["post"], url_path="upload", parser_classes=[MultiPartParser])
-    def upload(self, request):
-        file = request.FILES.get("file")
-        if not file:
+    @action(detail=True, methods=["get"], url_path="file")
+    def file(self, request, pk=None):
+        """The proof file, streamed from private storage. Admin views are logged (POPIA)."""
+        from config.private_storage import serve_private_file
+        from apps.privacy.models import DataAccessAuditLog
+
+        proof = self.get_object()  # admins see every proof; buyers only their own
+        if not proof.file:
             return Response(
-                {"error": {"code": "bad_request", "message": "No file provided."}},
-                status=status.HTTP_400_BAD_REQUEST,
+                {"error": {"code": "not_found", "message": "This proof has no stored file."}},
+                status=status.HTTP_404_NOT_FOUND,
             )
-        try:
-            saved_path = save_proof_file(file)
-        except InvalidProofFileError as e:
-            return Response(
-                {"error": {"code": "bad_request", "message": str(e)}},
-                status=status.HTTP_400_BAD_REQUEST,
+        if request.user.id != proof.uploaded_by_id:
+            DataAccessAuditLog.objects.create(
+                user=proof.uploaded_by, accessed_by=request.user,
+                reason=f"Viewed proof of payment for order #{proof.transaction.order_id}",
             )
-        url = request.build_absolute_uri(default_storage.url(saved_path))
-        return Response({"url": url}, status=status.HTTP_200_OK)
+        name = f"proof-of-payment-order-{proof.transaction.order_id}{os.path.splitext(proof.file.name)[1]}"
+        content_type = mimetypes.guess_type(proof.file.name)[0]
+        return serve_private_file(proof.file, name, content_type)
 
     @action(detail=False, methods=["get"], url_path="pending")
     def pending(self, request):

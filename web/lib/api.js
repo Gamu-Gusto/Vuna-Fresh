@@ -197,3 +197,55 @@ export async function uploadFile(path, file) {
 
   return res.json();
 }
+
+/**
+ * POST a multipart form (files and fields together), e.g. a proof of payment
+ * with its order details. `fields` is a plain object; File values are sent as files.
+ */
+export async function postForm(path, fields) {
+  const formData = new FormData();
+  for (const [key, value] of Object.entries(fields)) {
+    if (value !== undefined && value !== null) formData.append(key, value);
+  }
+  const headers = {};
+  const token = getAccessToken();
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch(`${BASE_URL}${path}`, { method: 'POST', headers, body: formData });
+  if (!res.ok) {
+    let errorMessage = `Upload failed (${res.status})`;
+    let errorDetail = null;
+    try {
+      const body = await res.json();
+      errorMessage = body?.error?.message || body?.detail || errorMessage;
+      errorDetail = body?.error?.detail ?? null;
+    } catch {}
+    throw new ApiError(res.status, errorMessage, errorDetail);
+  }
+  return res.json();
+}
+
+/**
+ * Open a private file (proof of payment, driver document) in a new tab.
+ * These have no public link: the API checks who's asking, so the file is
+ * fetched with the login token and shown from memory. The tab is opened
+ * straight away so pop-up blockers allow it.
+ */
+export async function openPrivateFile(path) {
+  const tab = window.open('', '_blank');
+  try {
+    const headers = {};
+    const token = getAccessToken();
+    if (token) headers['Authorization'] = `Bearer ${token}`;
+    const res = await fetch(`${BASE_URL}${path}`, { headers });
+    if (!res.ok) throw new ApiError(res.status, res.status === 404 ? 'File not found.' : `Could not open the file (${res.status}).`);
+    const blobUrl = URL.createObjectURL(await res.blob());
+    if (tab) tab.location.href = blobUrl;
+    else window.location.href = blobUrl;
+    // Let the tab load it, then free the memory
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+  } catch (err) {
+    tab?.close();
+    throw err;
+  }
+}
