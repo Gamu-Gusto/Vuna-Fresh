@@ -6,6 +6,13 @@ import { useRouter, useParams } from 'next/navigation';
 import Link from 'next/link';
 import { ProductFormFields } from '@/components/FarmerProductForm';
 
+// The server's reason per field (e.g. "This product is no longer in the catalogue."),
+// not just the generic "Invalid input."
+function errorText(err) {
+  if (!err.detail || typeof err.detail !== 'object') return err.message;
+  return Object.values(err.detail).flat().join(' ');
+}
+
 export default function EditProductPage() {
   const { id } = useParams();
   const router = useRouter();
@@ -67,7 +74,7 @@ export default function EditProductPage() {
       });
       router.push('/farmer/inventory');
     } catch (err) {
-      setError(err.message);
+      setError(errorText(err));
     } finally {
       setLoading(false);
     }

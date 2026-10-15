@@ -206,6 +206,10 @@ function CataloguePicker({ catalogue, value, onSelect }) {
         required
         className="w-full border border-t-0 border-gray-300 rounded-b-lg px-1 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-brand-green focus:border-transparent"
       >
+        {/* Matches the empty value, so nothing looks chosen until the farmer picks.
+            Without it React highlights the first product, and clicking that
+            product changes nothing, so the form is sent with no product. */}
+        <option value="" disabled hidden>Choose a product</option>
         {groups.map(([group, items]) => (
           <optgroup key={group} label={group}>
             {items.map(item => (
