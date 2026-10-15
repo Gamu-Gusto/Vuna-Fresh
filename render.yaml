@@ -1,7 +1,8 @@
 # Render Blueprint for a FREE-TIER TEST deployment of Vuna Fresh.
 # Not for real customers. Free-tier limits that affect testing:
-#   - Uploaded files (product photos, proof of payment) are kept on the API
-#     server's disk and are wiped on every deploy and restart.
+#   - Uploaded files (product photos, proof of payment) go to Supabase Storage
+#     once the STORAGE_* variables below are set in the dashboard. Until then
+#     they're kept on the API server's disk and wiped on every deploy and restart.
 #   - Services sleep after 15 minutes idle; the first request then takes ~1 minute.
 #   - The free database is deleted after 30 days.
 #   - There is no Shell, so the first admin is created during the build from
@@ -89,8 +90,24 @@ services:
       # Email is not set up: emails are written to this service's logs instead
       # of being sent. To send real email later, add EMAIL_HOST, EMAIL_HOST_USER
       # and EMAIL_HOST_PASSWORD in the dashboard (e.g. Brevo's free SMTP).
-      #
-      # File storage: no R2 variables, so uploads go to this server's disk.
+
+      # File storage: Supabase Storage (S3-compatible). Set these in the
+      # dashboard, on this service's Environment page. Until STORAGE_BUCKET_NAME
+      # is set, uploads go to this server's disk and are wiped on every deploy.
+      - key: STORAGE_ENDPOINT_URL      # https://<project-ref>.storage.supabase.co/storage/v1/s3
+        sync: false
+      - key: STORAGE_REGION            # the project's region, e.g. eu-central-1
+        sync: false
+      - key: STORAGE_BUCKET_NAME       # vunafresh
+        sync: false
+      - key: STORAGE_PUBLIC_DOMAIN     # <project-ref>.supabase.co/storage/v1/object/public/vunafresh
+        sync: false
+      - key: STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: STORAGE_ADDRESSING_STYLE
+        value: path
 
   - type: web
     name: vunafresh

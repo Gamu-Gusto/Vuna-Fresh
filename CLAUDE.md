@@ -22,7 +22,7 @@ Also in Phase 1 (added after the original plan, intentionally): business buyer a
 - **Mobile:** React Native, consumes the same DRF API
 - **Payments:** PayFast online, plus manual direct deposit. Do not scaffold Yoco or PayStack integrations until explicitly asked. For now all payments are offline (EFT / direct deposit with proof upload, admin approval). PayFast code exists but is switched off with `PAYFAST_ENABLED=False` until the merchant account is live.
 - **Hosting:** Render
-- **File/image storage:** Cloudflare R2 via `django-storages`
+- **File/image storage:** Supabase Storage (S3-compatible) via `django-storages`, configured with the `STORAGE_*` environment variables. Without them, production falls back to the server's disk, which Render wipes on every deploy.
 
 ## Folder structure
 

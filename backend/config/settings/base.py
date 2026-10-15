@@ -158,18 +158,29 @@ SIMPLE_JWT = {
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
 
-# ── Cloudflare R2 (file/image storage) ───────────────────────────────────────
-AWS_ACCESS_KEY_ID = env("R2_ACCESS_KEY_ID", default="")
-AWS_SECRET_ACCESS_KEY = env("R2_SECRET_ACCESS_KEY", default="")
-AWS_STORAGE_BUCKET_NAME = env("R2_BUCKET_NAME", default="")
-AWS_S3_ENDPOINT_URL = env("R2_ENDPOINT_URL", default="")
-AWS_S3_REGION_NAME = "auto"
-# R2 has no per-object ACLs — public access is set on the bucket (r2.dev URL or custom domain).
+# ── File/image storage (any S3-compatible service) ──────────────────────────
+# Product photos and proofs of payment. Works with Supabase Storage, Cloudflare
+# R2, Backblaze B2 and the like. The older R2_* names are still read as a
+# fallback. Without a bucket, production stores files on the server's own disk.
+def _storage_env(name, default=""):
+    return env(f"STORAGE_{name}", default="") or env(f"R2_{name}", default=default)
+
+
+AWS_ACCESS_KEY_ID = _storage_env("ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = _storage_env("SECRET_ACCESS_KEY")
+AWS_STORAGE_BUCKET_NAME = _storage_env("BUCKET_NAME")
+AWS_S3_ENDPOINT_URL = _storage_env("ENDPOINT_URL")
+# R2 uses "auto"; Supabase needs the project's region (e.g. eu-central-1)
+AWS_S3_REGION_NAME = _storage_env("REGION", default="auto")
+# Supabase needs path-style addresses (endpoint/bucket/key); R2 works either way
+AWS_S3_ADDRESSING_STYLE = _storage_env("ADDRESSING_STYLE") or None
+# Access is set on the bucket (public bucket / public domain), not per object
 AWS_DEFAULT_ACL = None
 AWS_S3_FILE_OVERWRITE = False
 # Stored URLs (Product.image_url, DirectDepositProof.file_url) must be permanent and
-# short, so serve from the bucket's public domain instead of expiring signed URLs.
-AWS_S3_CUSTOM_DOMAIN = env("R2_PUBLIC_DOMAIN", default="") or None
+# short, so serve from the bucket's public address instead of expiring signed URLs.
+# Supabase: <project-ref>.supabase.co/storage/v1/object/public/<bucket> (no https://)
+AWS_S3_CUSTOM_DOMAIN = _storage_env("PUBLIC_DOMAIN") or None
 AWS_QUERYSTRING_AUTH = AWS_S3_CUSTOM_DOMAIN is None
 
 # ── PayFast ───────────────────────────────────────────────────────────────────
