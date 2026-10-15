@@ -65,3 +65,39 @@ class ReviewFlag(models.Model):
 
     def __str__(self):
         return f"ReviewFlag(review={self.review_id}, by={self.flagged_by.email})"
+
+
+class DriverReview(models.Model):
+    """
+    A buyer's rating of the driver and delivery service for one delivered
+    order. Drivers see their ratings and comments but not who wrote them.
+    """
+    order = models.OneToOneField(
+        "orders.Order",
+        on_delete=models.CASCADE,
+        related_name="driver_review",
+    )
+    driver = models.ForeignKey(
+        "users.DriverProfile",
+        on_delete=models.CASCADE,
+        related_name="reviews",
+    )
+    buyer = models.ForeignKey(
+        "users.BuyerProfile",
+        on_delete=models.CASCADE,
+        related_name="driver_reviews",
+    )
+    rating = models.PositiveSmallIntegerField(
+        validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    comment = models.TextField(blank=True)
+    status = models.CharField(max_length=10, choices=ReviewStatus.choices, default=ReviewStatus.VISIBLE)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "driver_reviews"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"DriverReview(order={self.order_id}, {self.rating}★, driver={self.driver_id})"

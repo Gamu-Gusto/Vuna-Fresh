@@ -135,6 +135,9 @@ class OrderSerializer(serializers.ModelSerializer):
     status_history = OrderStatusHistorySerializer(many=True, read_only=True)
     buyer_email = serializers.EmailField(source="buyer.user.email", read_only=True)
     payment = serializers.SerializerMethodField()
+    # First name only: enough for the buyer to recognise who delivered
+    driver_name = serializers.CharField(source="driver.user.first_name", default=None, read_only=True)
+    driver_review = serializers.SerializerMethodField()
 
     class Meta:
         model = Order
@@ -143,6 +146,8 @@ class OrderSerializer(serializers.ModelSerializer):
             "buyer_email",
             "delivery_address",
             "driver",
+            "driver_name",
+            "driver_review",
             "status",
             "scheduled_delivery_time",
             "subtotal",
@@ -155,10 +160,15 @@ class OrderSerializer(serializers.ModelSerializer):
             "created_at",
         ]
         read_only_fields = [
-            "id", "buyer_email", "driver", "status",
+            "id", "buyer_email", "driver", "driver_name", "driver_review", "status",
             "subtotal", "delivery_fee", "total", "items", "status_history", "payment_terms", "payment",
             "created_at",
         ]
+
+    def get_driver_review(self, obj):
+        """The buyer's rating of this order's driver, or None if not rated yet."""
+        review = getattr(obj, "driver_review", None)
+        return {"rating": review.rating} if review else None
 
     def get_payment(self, obj):
         """

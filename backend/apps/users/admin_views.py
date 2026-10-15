@@ -1,3 +1,4 @@
+from django.db.models import Avg, Count, Q
 from django.utils import timezone
 from rest_framework import mixins, viewsets, status
 from rest_framework.decorators import action
@@ -71,7 +72,11 @@ class DriverApprovalViewSet(viewsets.GenericViewSet):
     serializer_class = PendingDriverSerializer
 
     def get_queryset(self):
-        qs = DriverProfile.objects.select_related("user")
+        visible = ~Q(reviews__status="removed")
+        qs = DriverProfile.objects.select_related("user").annotate(
+            average_rating=Avg("reviews__rating", filter=visible),
+            rating_count=Count("reviews", filter=visible),
+        )
         if self.request.query_params.get("pending") == "true":
             qs = qs.filter(is_approved=False)
         return qs

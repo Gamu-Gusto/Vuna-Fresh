@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import ProductReview, ReviewFlag, ReviewStatus
+from .models import DriverReview, ProductReview, ReviewFlag, ReviewStatus
 
 
 class ProductReviewSerializer(serializers.ModelSerializer):
@@ -109,3 +109,49 @@ class ReviewFlagSerializer(serializers.ModelSerializer):
 class ReviewStatusUpdateSerializer(serializers.Serializer):
     """Admin-only — moves a review between visible/flagged/removed."""
     status = serializers.ChoiceField(choices=ReviewStatus.choices)
+
+
+class DriverReviewSerializer(serializers.ModelSerializer):
+    """Read serializer. The buyer's identity is only included for admins."""
+    driver_name = serializers.CharField(source="driver.user.full_name", read_only=True)
+
+    class Meta:
+        model = DriverReview
+        fields = ["id", "order", "driver", "driver_name", "rating", "comment", "status", "created_at"]
+        read_only_fields = fields
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        request = self.context.get("request")
+        if request and request.user.is_authenticated and request.user.role == "admin":
+            data["buyer_email"] = instance.buyer.user.email
+        return data
+
+
+class DriverReviewWriteSerializer(serializers.ModelSerializer):
+    """POST /driver-reviews/ — the buyer rates the driver of their delivered order."""
+
+    class Meta:
+        model = DriverReview
+        fields = ["id", "order", "rating", "comment"]
+        read_only_fields = ["id"]
+
+    def validate_order(self, order):
+        from apps.buyers.resolvers import user_can_act_for_buyer_profile
+        from apps.orders.models import OrderStatus
+
+        if not user_can_act_for_buyer_profile(self.context["request"].user, order.buyer, require_write=True):
+            raise serializers.ValidationError("This order does not belong to you.")
+        if order.status != OrderStatus.DELIVERED:
+            raise serializers.ValidationError("You can rate the driver once your order has been delivered.")
+        if order.driver_id is None:
+            raise serializers.ValidationError("This order had no driver assigned.")
+        if DriverReview.objects.filter(order=order).exists():
+            raise serializers.ValidationError("You have already rated the driver for this order.")
+        return order
+
+    def create(self, validated_data):
+        order = validated_data["order"]
+        validated_data["driver"] = order.driver
+        validated_data["buyer"] = order.buyer
+        return super().create(validated_data)

@@ -8,7 +8,7 @@ BUYER_STATUS_MESSAGES = {
     OrderStatus.PREPARING: "Your order #{id} is being prepared by the farm.",
     OrderStatus.READY_FOR_PICKUP: "Your order #{id} is packed and waiting for a driver.",
     OrderStatus.OUT_FOR_DELIVERY: "Your order #{id} is out for delivery.",
-    OrderStatus.DELIVERED: "Your order #{id} has been delivered. Enjoy!",
+    OrderStatus.DELIVERED: "Your order #{id} has been delivered. Enjoy! Rate your driver and the products on your Orders page.",
     OrderStatus.CANCELLED: "Your order #{id} has been cancelled. Contact support if you have questions.",
 }
 

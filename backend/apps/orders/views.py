@@ -120,7 +120,7 @@ class OrderViewSet(
     def get_queryset(self):
         user = self.request.user
         qs = Order.objects.select_related(
-            "buyer__user", "delivery_address", "driver__user"
+            "buyer__user", "delivery_address", "driver__user", "driver_review"
         ).prefetch_related(
             "items__product", "items__farmer", "status_history__changed_by", "transactions__deposit_proofs",
         )

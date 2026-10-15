@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import ProductReview, ReviewFlag
+from .models import DriverReview, ProductReview, ReviewFlag
 
 
 class ReviewFlagInline(admin.TabularInline):
@@ -23,3 +23,11 @@ class ReviewFlagAdmin(admin.ModelAdmin):
     list_display = ["id", "review", "flagged_by", "created_at"]
     search_fields = ["review__product__name", "flagged_by__email"]
     readonly_fields = ["created_at"]
+
+
+@admin.register(DriverReview)
+class DriverReviewAdmin(admin.ModelAdmin):
+    list_display = ["id", "order", "driver", "buyer", "rating", "status", "created_at"]
+    list_filter = ["status", "rating"]
+    search_fields = ["driver__user__email", "buyer__user__email", "order__id"]
+    readonly_fields = ["order", "driver", "buyer", "created_at", "updated_at"]

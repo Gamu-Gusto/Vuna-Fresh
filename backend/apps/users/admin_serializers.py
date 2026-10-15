@@ -22,6 +22,9 @@ class PendingDriverSerializer(serializers.ModelSerializer):
     full_name = serializers.CharField(source="user.full_name", read_only=True)
     user_status = serializers.CharField(source="user.status", read_only=True)
     date_joined = serializers.DateTimeField(source="user.date_joined", read_only=True)
+    # Annotated by AdminDriverViewSet: buyers' ratings, to help when assigning deliveries
+    average_rating = serializers.FloatField(read_only=True, default=None)
+    rating_count = serializers.IntegerField(read_only=True, default=0)
 
     class Meta:
         model = DriverProfile
@@ -29,6 +32,7 @@ class PendingDriverSerializer(serializers.ModelSerializer):
             "id", "email", "full_name", "user_status",
             "vehicle_type", "vehicle_registration",
             "is_approved", "approved_at", "rejection_reason", "date_joined",
+            "average_rating", "rating_count",
         ]
 
 

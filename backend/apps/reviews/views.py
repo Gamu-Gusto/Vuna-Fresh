@@ -1,12 +1,14 @@
-from django.db.models import F
-from rest_framework import status, viewsets
+from django.db.models import Avg, Count, F
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 
-from .models import ProductReview, ReviewStatus
-from .permissions import IsAdminUser, IsBuyer, IsFarmer, IsReviewOwner
+from .models import DriverReview, ProductReview, ReviewStatus
+from .permissions import IsAdminUser, IsBuyer, IsDriver, IsFarmer, IsReviewOwner
 from .serializers import (
+    DriverReviewSerializer,
+    DriverReviewWriteSerializer,
     ProductReviewSerializer,
     ProductReviewUpdateSerializer,
     ProductReviewWriteSerializer,
@@ -149,3 +151,78 @@ class ProductReviewViewSet(viewsets.ModelViewSet):
         page = self.paginate_queryset(qs)
         serializer = ProductReviewSerializer(page, many=True, context=self.get_serializer_context())
         return self.get_paginated_response(serializer.data)
+
+
+def driver_rating_summary(driver_reviews):
+    """{"average": 4.5 or None, "count": n} over visible ratings only."""
+    agg = driver_reviews.exclude(status=ReviewStatus.REMOVED).aggregate(average=Avg("rating"), count=Count("id"))
+    average = round(agg["average"], 1) if agg["average"] is not None else None
+    return {"average": average, "count": agg["count"]}
+
+
+class DriverReviewViewSet(
+    mixins.CreateModelMixin, mixins.ListModelMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet,
+):
+    """
+    POST /api/v1/driver-reviews/                  — buyer rates the driver of a delivered order (once)
+    GET  /api/v1/driver-reviews/                  — buyer: own ratings; driver: ratings received
+                                                     (without who wrote them); admin: all (?driver=)
+    GET  /api/v1/driver-reviews/summary/          — driver: own average rating; admin: ?driver=<id>
+    POST /api/v1/driver-reviews/<id>/set_status/  — admin: hide (removed) or restore (visible) a rating
+    """
+
+    def get_queryset(self):
+        qs = DriverReview.objects.select_related("driver__user", "buyer__user")
+        user = self.request.user
+        if user.role == "admin":
+            driver_id = self.request.query_params.get("driver")
+            return qs.filter(driver_id=driver_id) if driver_id else qs
+        if user.role == "driver":
+            return qs.filter(driver__user=user).exclude(status=ReviewStatus.REMOVED)
+        from apps.buyers.resolvers import get_accessible_buyer_profiles
+        return qs.filter(buyer_id__in=[p.id for p in get_accessible_buyer_profiles(user)])
+
+    def get_serializer_class(self):
+        return DriverReviewWriteSerializer if self.action == "create" else DriverReviewSerializer
+
+    def get_permissions(self):
+        if self.action == "create":
+            return [IsAuthenticated(), IsBuyer()]
+        if self.action == "set_status":
+            return [IsAuthenticated(), IsAdminUser()]
+        return [IsAuthenticated()]
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        review = serializer.save()
+        return Response(
+            DriverReviewSerializer(review, context=self.get_serializer_context()).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+    @action(detail=False, methods=["get"], url_path="summary")
+    def summary(self, request):
+        if request.user.role == "admin":
+            driver_id = request.query_params.get("driver")
+            if not driver_id:
+                return Response(
+                    {"error": {"code": "bad_request", "message": "Pass ?driver=<id>."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(driver_rating_summary(DriverReview.objects.filter(driver_id=driver_id)))
+        if request.user.role == "driver":
+            return Response(driver_rating_summary(DriverReview.objects.filter(driver__user=request.user)))
+        return Response(
+            {"error": {"code": "forbidden", "message": "Only drivers and admins can see rating summaries."}},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    @action(detail=True, methods=["post"], url_path="set_status")
+    def set_status(self, request, pk=None):
+        review = self.get_object()
+        serializer = ReviewStatusUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        review.status = serializer.validated_data["status"]
+        review.save(update_fields=["status"])
+        return Response(DriverReviewSerializer(review, context=self.get_serializer_context()).data)
