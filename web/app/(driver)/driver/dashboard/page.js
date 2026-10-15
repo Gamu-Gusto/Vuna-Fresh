@@ -16,7 +16,7 @@ const deliveredAt = order =>
 export default function DriverDashboard() {
   const { user } = useAuth();
   const [data, setData] = useState(null);
-  const [pending, setPending] = useState(false);
+  const [pending, setPending] = useState(null); // the document checklist while the application is open
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -36,21 +36,37 @@ export default function DriverDashboard() {
           ratings: summary && recent ? { summary, recent: (recent.results ?? []).slice(0, 4) } : null,
         });
       } catch (err) {
-        if (err instanceof ApiError && err.status === 403) setPending(true);
-        else setError(err.message);
+        if (err instanceof ApiError && err.status === 403) {
+          setPending(await apiClient.get('/users/me/driver-documents/').catch(() => ({ items: [] })));
+        } else setError(err.message);
       }
     }
     load();
   }, []);
 
   if (pending) {
+    const total = pending.items.length;
+    const done = pending.items.filter(i => i.document && i.document.status !== 'rejected').length;
+    const needsFix = pending.items.some(i => i.document?.status === 'rejected');
+    let banner;
+    if (pending.rejection_reason) {
+      banner = { title: 'Your application was turned down', body: `${pending.rejection_reason}. Contact support if you think this is a mistake.` };
+    } else if (!pending.consent_given || done < total) {
+      banner = {
+        title: needsFix ? 'A document needs a new upload' : 'Upload your documents',
+        body: `${done} of ${total} documents in. Your application is checked once everything is uploaded.`,
+        action: { href: '/driver/documents', label: needsFix ? 'Fix it now' : 'Upload documents' },
+      };
+    } else {
+      banner = {
+        title: "We're checking your application",
+        body: 'Everything is in. Someone from the Vuna Fresh team is checking your documents. Your deliveries show up here once you’re approved.',
+        action: { href: '/driver/documents', label: 'See your documents' },
+      };
+    }
     return (
       <div className="max-w-xl mt-8">
-        <HeroBanner
-          kicker="Driver application"
-          title="We're checking your application"
-          body="Someone from the Vuna Fresh team will look at your driver account. Your deliveries will show up here once it's approved."
-        />
+        <HeroBanner kicker="Driver application" {...banner} />
         <p className="mt-6 text-sm text-gray-500">Signed in as {user?.email}</p>
       </div>
     );

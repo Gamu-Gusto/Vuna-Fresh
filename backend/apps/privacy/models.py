@@ -8,6 +8,8 @@ class ConsentType(models.TextChoices):
     MARKETING = "marketing", "Marketing"
     COOKIES = "cookies", "Cookies"
     THIRD_PARTY_SHARING = "third_party_sharing", "Third-Party Sharing"
+    # Drivers: collecting and checking ID, licence, vehicle, address and bank documents
+    DRIVER_VERIFICATION = "driver_verification", "Driver Verification Documents"
 
 
 class DataAccessRequestType(models.TextChoices):

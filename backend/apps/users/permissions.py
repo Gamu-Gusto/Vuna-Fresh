@@ -46,6 +46,14 @@ class IsFarmerAccount(BasePermission):
         )
 
 
+class IsDriverAccount(BasePermission):
+    """Any driver-role user, approved or not — like IsFarmerAccount. Used for the
+    driver's own verification documents, which they upload before approval."""
+
+    def has_permission(self, request, view):
+        return bool(request.user and request.user.is_authenticated and request.user.role == "driver")
+
+
 class IsDriver(BasePermission):
     """Allow access only to approved drivers."""
 

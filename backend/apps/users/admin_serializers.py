@@ -25,6 +25,10 @@ class PendingDriverSerializer(serializers.ModelSerializer):
     # Annotated by AdminDriverViewSet: buyers' ratings, to help when assigning deliveries
     average_rating = serializers.FloatField(read_only=True, default=None)
     rating_count = serializers.IntegerField(read_only=True, default=0)
+    # Verification (see driver_verification.py); files are fetched via .../documents/<id>/file/
+    age = serializers.IntegerField(read_only=True)
+    verification = serializers.SerializerMethodField()
+    documents = serializers.SerializerMethodField()
 
     class Meta:
         model = DriverProfile
@@ -33,6 +37,35 @@ class PendingDriverSerializer(serializers.ModelSerializer):
             "vehicle_type", "vehicle_registration",
             "is_approved", "approved_at", "rejection_reason", "date_joined",
             "average_rating", "rating_count",
+            "date_of_birth", "age", "nationality", "id_number", "passport_number",
+            "verification", "documents",
+        ]
+
+    def get_verification(self, obj):
+        from .driver_verification import DocumentType
+
+        status = obj.verification_status()
+        return {
+            "complete": status["complete"],
+            "consent_given": status["consent"],
+            "old_enough": status["old_enough"],
+            "missing": [DocumentType(t).label for t in status["missing"]],
+            "rejected": [DocumentType(t).label for t in status["rejected"]],
+        }
+
+    def get_documents(self, obj):
+        from .driver_verification import required_documents
+
+        # Same order as the driver's checklist; anything no longer required goes last
+        order = {t: i for i, t in enumerate(required_documents(obj.nationality))}
+        docs = sorted(obj.documents.all(), key=lambda d: order.get(d.doc_type, len(order)))
+        return [
+            {
+                "id": d.id, "doc_type": d.doc_type, "label": d.get_doc_type_display(),
+                "original_name": d.original_name, "status": d.status, "review_note": d.review_note,
+                "uploaded_at": d.uploaded_at,
+            }
+            for d in docs
         ]
 
 
@@ -44,6 +77,19 @@ class ApprovalActionSerializer(serializers.Serializer):
     def validate(self, attrs):
         if attrs["action"] == "reject" and not attrs.get("reason", "").strip():
             raise serializers.ValidationError({"reason": "A reason is required when rejecting."})
+        return attrs
+
+
+class DriverDocumentReviewSerializer(serializers.Serializer):
+    """Accept or reject one driver document; a rejection note is shown to the driver."""
+    action = serializers.ChoiceField(choices=["accept", "reject"])
+    note = serializers.CharField(max_length=255, required=False, allow_blank=True, default="")
+
+    def validate(self, attrs):
+        if attrs["action"] == "reject" and not attrs["note"].strip():
+            raise serializers.ValidationError(
+                {"note": "Tell the driver what's wrong, e.g. \"Proof of address is older than 3 months\"."}
+            )
         return attrs
 
 

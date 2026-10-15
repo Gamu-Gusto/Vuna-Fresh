@@ -5,6 +5,9 @@ from .views import (
     AddressDetailView,
     AddressListCreateView,
     BuyerProfileView,
+    DriverDocumentConsentView,
+    DriverDocumentFileView,
+    DriverDocumentsView,
     DriverProfileView,
     FarmerProfileView,
     MeView,
@@ -30,4 +33,8 @@ urlpatterns = [
     path("users/me/profile/buyer/", BuyerProfileView.as_view(), name="buyer-profile"),
     path("users/me/profile/farmer/", FarmerProfileView.as_view(), name="farmer-profile"),
     path("users/me/profile/driver/", DriverProfileView.as_view(), name="driver-profile"),
+    # Driver verification documents (before and after approval)
+    path("users/me/driver-documents/", DriverDocumentsView.as_view(), name="driver-documents"),
+    path("users/me/driver-documents/consent/", DriverDocumentConsentView.as_view(), name="driver-documents-consent"),
+    path("users/me/driver-documents/<str:doc_type>/file/", DriverDocumentFileView.as_view(), name="driver-document-file"),
 ]

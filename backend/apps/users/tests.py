@@ -1,17 +1,28 @@
 """
-Tests for signup.
+Tests for signup and accounts.
 
 Covers:
 - Self-registering as admin is refused
 - Privacy policy acceptance is required, and recorded as ConsentRecords
 - Business signup records consent the same way
+- Super admin and managers
+- Driver verification: age and identity at signup, consented private documents,
+  the approval rule, and 30-day deletion of documents no longer needed
 """
-from django.test import TestCase
+import io
+import shutil
+import tempfile
+from datetime import date, timedelta
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.management import call_command
+from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework.test import APIClient
 
-from apps.privacy.models import ConsentRecord
+from apps.privacy.models import ConsentRecord, DataAccessAuditLog
 
-from .models import User
+from .models import DriverDocument, DriverProfile, User
 
 SIGNUP = {
     "email": "new@test.com",
@@ -241,3 +252,257 @@ class SuperAdminAndManagerTests(TestCase):
         self.assertEqual(manager_client.post("/api/v1/payments/commission-settings/", body, format="json").status_code, 403)
         self.assertEqual(manager_client.get("/api/v1/payments/commission-settings/").status_code, 200)
         self.assertEqual(self.client.post("/api/v1/payments/commission-settings/", body, format="json").status_code, 201)
+
+
+def sa_id_for(dob, sequence="5009"):
+    """A valid 13-digit SA ID number for a date of birth (Luhn check digit worked out)."""
+    body = dob.strftime("%y%m%d") + sequence + "08"
+    for check in "0123456789":
+        total = 0
+        for i, ch in enumerate(reversed(body + check)):
+            digit = int(ch)
+            if i % 2 == 1:
+                digit = digit * 2 - 9 if digit * 2 > 9 else digit * 2
+            total += digit
+        if total % 10 == 0:
+            return body + check
+    raise AssertionError("no valid check digit")
+
+
+def pdf(name="doc.pdf", body=b"%PDF-1.4 document"):
+    return SimpleUploadedFile(name, body, content_type="application/pdf")
+
+
+class DriverVerificationTests(TestCase):
+    """
+    Driver signup: 21+, SA ID (valid, matching the date of birth) or passport;
+    then a consented document checklist by nationality, stored privately; an
+    admin can only approve a complete application; documents of rejected,
+    withdrawn or abandoned applications are deleted after 30 days.
+    """
+
+    SA_DOCS = ["sa_drivers_licence", "sa_id", "vehicle_registration", "roadworthy_certificate",
+               "licence_disc", "proof_of_address", "proof_of_bank_account"]
+
+    def setUp(self):
+        self.private_root = tempfile.mkdtemp()
+        override = override_settings(PRIVATE_MEDIA_ROOT=self.private_root)
+        override.enable()
+        self.addCleanup(override.disable)
+        self.addCleanup(shutil.rmtree, self.private_root, True)
+
+        self.client = APIClient()
+        self.dob = date(1995, 3, 14)
+        self.admin = User.objects.create_superuser(email="boss@test.com", password="TestPass123!")
+        self.admin_client = APIClient()
+        self.admin_client.force_authenticate(self.admin)
+
+    def signup(self, **overrides):
+        data = {
+            "email": "driver@test.com", "first_name": "Sipho", "last_name": "N", "phone": "0820000000",
+            "password": "StrongPass!2026", "password_confirm": "StrongPass!2026", "role": "driver",
+            "accept_privacy_policy": True, "date_of_birth": self.dob.isoformat(),
+            "nationality": "sa_citizen", "id_number": sa_id_for(self.dob),
+            "vehicle_type": "Bakkie", "vehicle_registration": "GP 12 AB",
+            **overrides,
+        }
+        return self.client.post("/api/v1/auth/register/", data, format="json")
+
+    def driver_client(self):
+        client = APIClient()
+        client.force_authenticate(User.objects.get(email="driver@test.com"))
+        return client
+
+    def profile(self):
+        return User.objects.get(email="driver@test.com").driver_profile
+
+    def consent_and_upload(self, client, doc_types):
+        client.post("/api/v1/users/me/driver-documents/consent/", {"granted": True}, format="json")
+        for t in doc_types:
+            res = client.post(
+                "/api/v1/users/me/driver-documents/", {"doc_type": t, "file": pdf(f"{t}.pdf")}, format="multipart",
+            )
+            self.assertEqual(res.status_code, 201, res.data)
+
+    def approve(self):
+        return self.admin_client.post(
+            f"/api/v1/admin/drivers/{self.profile().id}/review/", {"action": "approve"}, format="json",
+        )
+
+    def purge(self):
+        call_command("purge_driver_documents", stdout=io.StringIO())
+
+    # Signup
+
+    def test_sa_signup_saves_identity_and_vehicle(self):
+        self.assertEqual(self.signup().status_code, 201)
+        profile = self.profile()
+        self.assertEqual(
+            (profile.date_of_birth, profile.nationality, profile.vehicle_type, profile.id_number, profile.passport_number),
+            (self.dob, "sa_citizen", "Bakkie", sa_id_for(self.dob), ""),
+        )
+
+    def test_under_21_refused(self):
+        today = date.today()
+        young = date(today.year - 20, today.month, min(today.day, 28))
+        res = self.signup(date_of_birth=young.isoformat(), id_number=sa_id_for(young))
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("date_of_birth", res.data["error"]["detail"])
+        self.assertFalse(User.objects.filter(email="driver@test.com").exists())
+
+    def test_sa_id_must_be_valid_and_match_date_of_birth(self):
+        good = sa_id_for(self.dob)
+        bad_check_digit = good[:-1] + str((int(good[-1]) + 1) % 10)
+        self.assertEqual(self.signup(id_number=bad_check_digit).status_code, 400)
+        self.assertEqual(self.signup(id_number="12345").status_code, 400)
+        res = self.signup(id_number=sa_id_for(date(1990, 1, 1)))
+        self.assertIn("match", str(res.data["error"]["detail"]["id_number"]))
+
+    def test_foreign_national_needs_passport(self):
+        res = self.signup(nationality="foreign_national", id_number="")
+        self.assertIn("passport_number", res.data["error"]["detail"])
+        res = self.signup(nationality="foreign_national", id_number="", passport_number="ZW1234567")
+        self.assertEqual(res.status_code, 201)
+        self.assertEqual((self.profile().passport_number, self.profile().id_number), ("ZW1234567", ""))
+
+    def test_customer_signup_unaffected(self):
+        res = self.client.post("/api/v1/auth/register/", {
+            "email": "buyer@test.com", "first_name": "A", "last_name": "B", "phone": "1",
+            "password": "StrongPass!2026", "password_confirm": "StrongPass!2026", "role": "customer",
+            "accept_privacy_policy": True,
+        }, format="json")
+        self.assertEqual(res.status_code, 201)
+
+    # Documents
+
+    def test_checklist_depends_on_nationality(self):
+        self.signup()
+        sa = [i["doc_type"] for i in self.driver_client().get("/api/v1/users/me/driver-documents/").data["items"]]
+        self.assertEqual(sa, self.SA_DOCS)
+        User.objects.filter(email="driver@test.com").delete()
+        self.signup(nationality="foreign_national", id_number="", passport_number="P1")
+        foreign = [i["doc_type"] for i in self.driver_client().get("/api/v1/users/me/driver-documents/").data["items"]]
+        self.assertEqual(foreign[:3], ["foreign_drivers_licence", "passport", "work_permit"])
+        self.assertNotIn("sa_id", foreign)
+
+    def test_upload_needs_consent_and_valid_file(self):
+        self.signup()
+        client = self.driver_client()
+        url = "/api/v1/users/me/driver-documents/"
+        self.assertEqual(client.post(url, {"doc_type": "sa_id", "file": pdf()}, format="multipart").status_code, 403)
+        client.post(f"{url}consent/", {"granted": True}, format="json")
+        self.assertTrue(ConsentRecord.objects.get(consent_type="driver_verification").granted)
+        exe = SimpleUploadedFile("x.exe", b"MZ", content_type="application/octet-stream")
+        self.assertEqual(client.post(url, {"doc_type": "sa_id", "file": exe}, format="multipart").status_code, 400)
+        # Not on this (South African) driver's list
+        self.assertEqual(client.post(url, {"doc_type": "passport", "file": pdf()}, format="multipart").status_code, 400)
+
+    def test_reupload_replaces_and_deletes_old_file(self):
+        self.signup()
+        client = self.driver_client()
+        self.consent_and_upload(client, ["sa_id"])
+        old = DriverDocument.objects.get()
+        old_name, storage = old.file.name, old.file.storage
+        self.consent_and_upload(client, ["sa_id"])
+        self.assertEqual(DriverDocument.objects.count(), 1)
+        self.assertFalse(storage.exists(old_name))
+
+    def test_files_are_private(self):
+        self.signup()
+        client = self.driver_client()
+        self.consent_and_upload(client, ["sa_id"])
+        res = client.get("/api/v1/users/me/driver-documents/sa_id/file/")
+        self.assertEqual((res.status_code, b"".join(res.streaming_content)), (200, b"%PDF-1.4 document"))
+        res.close()
+        self.assertEqual(APIClient().get("/api/v1/users/me/driver-documents/sa_id/file/").status_code, 401)
+        with self.assertRaises(ValueError):  # a private file has no URL at all
+            DriverDocument.objects.get().file.url
+
+    # Admin review
+
+    def test_cannot_approve_until_complete(self):
+        self.signup()
+        client = self.driver_client()
+        profile = self.profile()
+
+        self.assertIn("agreed to the document check", self.approve().data["error"]["message"])
+        self.consent_and_upload(client, self.SA_DOCS[:-1])
+        self.assertIn("1 required document(s) not uploaded", self.approve().data["error"]["message"])
+        self.consent_and_upload(client, self.SA_DOCS[-1:])
+
+        # Admin rejects the proof of address: the driver sees why, approval is blocked
+        doc = DriverDocument.objects.get(doc_type="proof_of_address")
+        res = self.admin_client.post(
+            f"/api/v1/admin/drivers/{profile.id}/documents/{doc.id}/review/",
+            {"action": "reject", "note": "Older than 3 months"}, format="json",
+        )
+        self.assertEqual(res.data["verification"]["rejected"], ["Proof of address"])
+        items = client.get("/api/v1/users/me/driver-documents/").data["items"]
+        item = next(i for i in items if i["doc_type"] == "proof_of_address")
+        self.assertEqual((item["document"]["status"], item["document"]["review_note"]), ("rejected", "Older than 3 months"))
+        self.assertIn("need a new upload", self.approve().data["error"]["message"])
+
+        # Viewing a document is logged against the driver
+        res = self.admin_client.get(f"/api/v1/admin/drivers/{profile.id}/documents/{doc.id}/file/")
+        self.assertEqual(res.status_code, 200)
+        res.close()  # release the file (Windows locks open files)
+        self.assertEqual(DataAccessAuditLog.objects.get().user.email, "driver@test.com")
+
+        # A new upload, then approval goes through and every document is accepted
+        self.consent_and_upload(client, ["proof_of_address"])
+        res = self.approve()
+        self.assertEqual(res.status_code, 200, res.data)
+        self.assertTrue(res.data["is_approved"])
+        self.assertEqual(set(DriverDocument.objects.values_list("status", flat=True)), {"accepted"})
+
+    def test_drivers_cannot_use_admin_document_views(self):
+        self.signup()
+        self.consent_and_upload(self.driver_client(), ["sa_id"])
+        doc = DriverDocument.objects.get()
+        url = f"/api/v1/admin/drivers/{self.profile().id}/documents/{doc.id}/file/"
+        self.assertEqual(self.driver_client().get(url).status_code, 403)
+
+    # Retention
+
+    def test_purge_30_days_after_rejection(self):
+        self.signup()
+        self.consent_and_upload(self.driver_client(), ["sa_id"])
+        doc = DriverDocument.objects.get()
+        name, storage = doc.file.name, doc.file.storage
+
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), 1)  # recent and in progress: kept
+
+        self.admin_client.post(
+            f"/api/v1/admin/drivers/{self.profile().id}/review/", {"action": "reject", "reason": "Incomplete"}, format="json",
+        )
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), 1)  # rejected today: kept for 30 days
+        DriverProfile.objects.update(rejected_at=timezone.now() - timedelta(days=31))
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), 0)
+        self.assertFalse(storage.exists(name))
+
+    def test_purge_when_consent_withdrawn_or_abandoned(self):
+        self.signup()
+        client = self.driver_client()
+        self.consent_and_upload(client, ["sa_id"])
+        client.post("/api/v1/users/me/driver-documents/consent/", {"granted": False}, format="json")
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), 0)
+
+        # Abandoned: incomplete, with nothing happening for 31 days
+        self.consent_and_upload(client, ["sa_id"])
+        long_ago = timezone.now() - timedelta(days=31)
+        DriverDocument.objects.update(uploaded_at=long_ago)
+        User.objects.filter(email="driver@test.com").update(date_joined=long_ago)
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), 0)
+
+    def test_approved_drivers_documents_are_kept(self):
+        self.signup()
+        self.consent_and_upload(self.driver_client(), self.SA_DOCS)
+        self.assertEqual(self.approve().status_code, 200)
+        DriverDocument.objects.update(uploaded_at=timezone.now() - timedelta(days=400))
+        self.purge()
+        self.assertEqual(DriverDocument.objects.count(), len(self.SA_DOCS))

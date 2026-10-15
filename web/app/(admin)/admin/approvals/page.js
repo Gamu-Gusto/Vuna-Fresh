@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { apiClient } from '@/lib/api';
+import { apiClient, openPrivateFile } from '@/lib/api';
 
 // Farmer/driver review uses action 'approve'/'reject' at /admin/{type}s/{id}/review/.
 // Business buyer review uses action 'approve'/'suspend' at /buyers/admin/business/{id}/review/
@@ -139,9 +139,20 @@ export default function ApprovalsPage() {
                 email={d.email}
                 dateJoined={d.date_joined}
                 detail={[
+                  d.age != null && `Age ${d.age}`,
+                  d.nationality === 'sa_citizen' && `SA citizen, ID ${d.id_number}`,
+                  d.nationality === 'foreign_national' && `Foreign national, passport ${d.passport_number}`,
                   d.vehicle_type && `Vehicle: ${d.vehicle_type}`,
                   d.vehicle_registration && `Reg: ${d.vehicle_registration}`,
                 ].filter(Boolean)}
+                approveBlockedReason={driverBlockedReason(d)}
+                extra={
+                  <DriverDocuments
+                    driver={d}
+                    onChange={updated => setDrivers(ds => ds.map(x => (x.id === updated.id ? updated : x)))}
+                    onError={setActionError}
+                  />
+                }
                 rejecting={rejectState?.id === d.id && rejectState?.type === 'driver'}
                 rejectReason={rejectState?.id === d.id ? rejectState.reason : ''}
                 onApprove={() => handleApprove(d.id, 'driver')}
@@ -212,8 +223,98 @@ function AllClear({ children }) {
   );
 }
 
+// Why a driver can't be approved yet (mirrors the backend rule), or null
+function driverBlockedReason(d) {
+  const v = d.verification;
+  if (!v || v.complete) return null;
+  if (!v.old_enough) return 'Not 21 or older, or no date of birth.';
+  if (!v.consent_given) return 'Hasn’t agreed to the document check yet.';
+  if (v.missing.length) return `Still to upload: ${v.missing.join(', ')}.`;
+  if (v.rejected.length) return `Waiting for a new upload: ${v.rejected.join(', ')}.`;
+  return 'Application not complete.';
+}
+
+const DOC_STATUS = {
+  submitted: { text: 'To check', tone: 'text-amber-700' },
+  accepted: { text: 'Accepted', tone: 'text-brand-green' },
+  rejected: { text: 'Rejected', tone: 'text-ember' },
+};
+
+// The driver's documents: view (logged), accept, or reject with a note the driver sees
+function DriverDocuments({ driver, onChange, onError }) {
+  const [rejecting, setRejecting] = useState(null); // { id, note }
+  const [busy, setBusy] = useState(null);
+
+  async function review(docId, body) {
+    onError('');
+    setBusy(docId);
+    try {
+      onChange(await apiClient.post(`/admin/drivers/${driver.id}/documents/${docId}/review/`, body));
+      setRejecting(null);
+    } catch (err) {
+      onError(err.message);
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  if (!driver.documents?.length) {
+    return <p className="mt-3 text-sm text-gray-500">No documents uploaded yet.</p>;
+  }
+  return (
+    <ul className="mt-4 border-t border-hairline divide-y divide-hairline">
+      {driver.documents.map(doc => (
+        <li key={doc.id} className="py-2 text-sm">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="min-w-0 flex-1 text-gray-800">{doc.label}</span>
+            <span className={DOC_STATUS[doc.status].tone}>{DOC_STATUS[doc.status].text}</span>
+            <button
+              type="button"
+              onClick={() => openPrivateFile(`/admin/drivers/${driver.id}/documents/${doc.id}/file/`).catch(err => onError(err.message))}
+              className="text-brand-green font-medium hover:underline"
+            >
+              View
+            </button>
+            {doc.status !== 'accepted' && (
+              <button type="button" disabled={busy === doc.id} onClick={() => review(doc.id, { action: 'accept' })} className="text-gray-700 hover:text-brand-green disabled:opacity-60">
+                Accept
+              </button>
+            )}
+            {doc.status !== 'rejected' && (
+              <button type="button" disabled={busy === doc.id} onClick={() => setRejecting({ id: doc.id, note: '' })} className="text-gray-700 hover:text-ember disabled:opacity-60">
+                Reject
+              </button>
+            )}
+          </div>
+          {doc.status === 'rejected' && doc.review_note && <p className="text-xs text-gray-500 mt-0.5">Note to driver: {doc.review_note}</p>}
+          {rejecting?.id === doc.id && (
+            <div className="mt-2 flex flex-wrap gap-2">
+              <input
+                value={rejecting.note}
+                onChange={e => setRejecting(r => ({ ...r, note: e.target.value }))}
+                placeholder="What's wrong? The driver sees this, e.g. Older than 3 months"
+                aria-label={`Why ${doc.label} is rejected`}
+                className="min-w-0 flex-1 border border-gray-300 rounded-lg px-3 py-1.5 text-sm"
+              />
+              <button
+                type="button"
+                disabled={!rejecting.note.trim() || busy === doc.id}
+                onClick={() => review(doc.id, { action: 'reject', note: rejecting.note.trim() })}
+                className="bg-red-600 text-white text-sm font-semibold px-3 py-1.5 rounded-lg disabled:opacity-60"
+              >
+                Reject document
+              </button>
+              <button type="button" onClick={() => setRejecting(null)} className="text-sm text-gray-500 px-2">Cancel</button>
+            </div>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function ApprovalCard({
-  name, email, dateJoined, detail,
+  name, email, dateJoined, detail, extra = null, approveBlockedReason = null,
   rejecting, rejectReason, rejectLabel = 'Reject',
   onApprove, onRejectClick, onRejectReasonChange, onRejectSubmit, onRejectCancel,
   loading,
@@ -230,13 +331,15 @@ function ApprovalCard({
           <p className="text-xs text-gray-400 mt-1">
             Applied {new Date(dateJoined).toLocaleDateString('en-ZA')}
           </p>
+          {approveBlockedReason && <p className="text-sm text-amber-700 mt-1">{approveBlockedReason}</p>}
         </div>
 
         {!rejecting && (
           <div className="flex gap-2 shrink-0">
             <button
               onClick={onApprove}
-              disabled={loading}
+              disabled={loading || Boolean(approveBlockedReason)}
+              title={approveBlockedReason ?? undefined}
               className="btn-primary text-sm px-4 py-1.5 disabled:opacity-60"
             >
               Approve
@@ -251,6 +354,8 @@ function ApprovalCard({
           </div>
         )}
       </div>
+
+      {extra}
 
       {rejecting && (
         <div className="mt-4 border-t border-hairline pt-4">

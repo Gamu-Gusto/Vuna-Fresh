@@ -41,6 +41,7 @@ services:
       pip install -r requirements.txt &&
       python manage.py collectstatic --noinput &&
       python manage.py migrate --noinput &&
+      python manage.py purge_driver_documents &&
       (python manage.py createsuperuser --noinput || echo "Admin already exists, skipping")
     startCommand: gunicorn config.wsgi:application
     envVars:
@@ -108,6 +109,10 @@ services:
         sync: false
       - key: STORAGE_ADDRESSING_STYLE
         value: path
+      # A second, PRIVATE bucket for proofs of payment and driver documents
+      # (IDs, licences, bank and address documents). Never make this one public.
+      - key: STORAGE_PRIVATE_BUCKET_NAME   # vunafresh-private
+        sync: false
 
   - type: web
     name: vunafresh

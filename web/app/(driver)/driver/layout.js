@@ -13,6 +13,7 @@ const SECTIONS = [
     label: 'Menu',
     items: [
       { href: '/driver/dashboard', label: 'Deliveries', icon: 'truck', match: ['/driver/deliveries'] },
+      { href: '/driver/documents', label: 'Documents', icon: 'receipt' },
     ],
   },
   {

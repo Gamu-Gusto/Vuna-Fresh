@@ -1,5 +1,17 @@
+import logging
+import os
+import uuid
+
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.db.models.signals import post_delete
+from django.dispatch import receiver
+
+from config.private_storage import private_storage
+
+from .driver_verification import (
+    MINIMUM_DRIVER_AGE, DocumentType, Nationality, age_on, required_documents,
+)
 
 
 class UserRole(models.TextChoices):
@@ -156,7 +168,16 @@ class DriverProfile(models.Model):
         related_name="approved_drivers",
     )
     rejection_reason = models.TextField(blank=True)
+    # When the application was rejected: its documents are deleted 30 days later
+    rejected_at = models.DateTimeField(null=True, blank=True)
     is_available = models.BooleanField(default=False)
+
+    # Identity, collected at signup (see driver_verification.py). Drivers must be 21+.
+    date_of_birth = models.DateField(null=True, blank=True)
+    nationality = models.CharField(max_length=20, choices=Nationality.choices, blank=True)
+    id_number = models.CharField(max_length=13, blank=True, help_text="South African citizens")
+    passport_number = models.CharField(max_length=20, blank=True, help_text="Foreign nationals")
+
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -165,3 +186,81 @@ class DriverProfile(models.Model):
 
     def __str__(self):
         return f"DriverProfile({self.user.email})"
+
+    @property
+    def age(self):
+        return age_on(self.date_of_birth) if self.date_of_birth else None
+
+    def verification_status(self):
+        """
+        {"required": [...], "missing": [...], "rejected": [...], "consent": bool,
+         "old_enough": bool, "complete": bool} — complete means an admin may approve.
+        """
+        from apps.privacy.models import ConsentRecord, ConsentType
+
+        required = required_documents(self.nationality)
+        by_type = {d.doc_type: d for d in self.documents.all()}
+        missing = [t for t in required if t not in by_type]
+        rejected = [t for t in required if t in by_type and by_type[t].status == DocumentStatus.REJECTED]
+        consent = ConsentRecord.objects.filter(
+            user_id=self.user_id, consent_type=ConsentType.DRIVER_VERIFICATION, granted=True,
+        ).exists()
+        old_enough = self.age is not None and self.age >= MINIMUM_DRIVER_AGE
+        return {
+            "required": list(required), "missing": missing, "rejected": rejected,
+            "consent": consent, "old_enough": old_enough,
+            "complete": bool(required) and not missing and not rejected and consent and old_enough,
+        }
+
+
+class DocumentStatus(models.TextChoices):
+    SUBMITTED = "submitted", "Waiting to be checked"
+    ACCEPTED = "accepted", "Accepted"
+    REJECTED = "rejected", "Needs a new upload"
+
+
+def driver_document_path(instance, filename):
+    ext = os.path.splitext(filename)[1].lower() or ".pdf"
+    return f"driver-documents/{uuid.uuid4()}{ext}"
+
+
+class DriverDocument(models.Model):
+    """
+    One verification document (see driver_verification.DocumentType). Stored in
+    private storage: never publicly linked, viewed by admins through the API
+    with each view written to the privacy audit log. A new upload of the same
+    type replaces the old one.
+    """
+    driver = models.ForeignKey(DriverProfile, on_delete=models.CASCADE, related_name="documents")
+    doc_type = models.CharField(max_length=30, choices=DocumentType.choices)
+    file = models.FileField(storage=private_storage, upload_to=driver_document_path)
+    original_name = models.CharField(max_length=255, blank=True)
+    content_type = models.CharField(max_length=100, blank=True)
+    status = models.CharField(max_length=10, choices=DocumentStatus.choices, default=DocumentStatus.SUBMITTED)
+    review_note = models.CharField(max_length=255, blank=True, help_text="Shown to the driver if rejected")
+    reviewed_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name="reviewed_driver_documents",
+    )
+    reviewed_at = models.DateTimeField(null=True, blank=True)
+    uploaded_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "driver_documents"
+        ordering = ["doc_type"]
+        constraints = [
+            models.UniqueConstraint(fields=["driver", "doc_type"], name="one_document_per_type_per_driver"),
+        ]
+
+    def __str__(self):
+        return f"DriverDocument({self.driver_id}, {self.doc_type}, {self.status})"
+
+
+@receiver(post_delete, sender=DriverDocument)
+def delete_driver_document_file(sender, instance, **kwargs):
+    # Rows go when a document is replaced, purged after 30 days or the account is
+    # deleted: the file must go with them, not linger in storage.
+    if instance.file:
+        try:
+            instance.file.delete(save=False)
+        except Exception:  # the row is gone either way; don't fail the request over the file
+            logging.getLogger(__name__).exception("Could not delete driver document file %s", instance.file.name)

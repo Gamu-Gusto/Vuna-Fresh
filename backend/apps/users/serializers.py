@@ -3,7 +3,11 @@ from rest_framework import serializers
 from rest_framework.validators import UniqueValidator
 from apps.privacy.consent import SignupConsentFields, pop_signup_consent, record_signup_consent
 
-from .models import User, Address, BuyerProfile, FarmerProfile, DriverProfile, UserRole
+from .driver_verification import (
+    ALLOWED_DOCUMENT_TYPES, DOCUMENT_HINTS, MAX_DOCUMENT_SIZE, MINIMUM_DRIVER_AGE,
+    DocumentType, Nationality, age_on, sa_id_date_of_birth,
+)
+from .models import User, Address, BuyerProfile, DriverDocument, FarmerProfile, DriverProfile, UserRole
 
 
 class RegisterSerializer(SignupConsentFields, serializers.ModelSerializer):
@@ -14,12 +18,21 @@ class RegisterSerializer(SignupConsentFields, serializers.ModelSerializer):
     password_confirm = serializers.CharField(write_only=True)
     farm_name = serializers.CharField(write_only=True, required=False, allow_blank=False, max_length=255)
     farm_location = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=255, default="")
+    # Drivers only (see driver_verification.py): identity, age and vehicle
+    date_of_birth = serializers.DateField(write_only=True, required=False)
+    nationality = serializers.ChoiceField(choices=Nationality.choices, write_only=True, required=False)
+    id_number = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=13, default="")
+    passport_number = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=20, default="")
+    vehicle_type = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=100, default="")
+    vehicle_registration = serializers.CharField(write_only=True, required=False, allow_blank=True, max_length=20, default="")
 
     class Meta:
         model = User
         fields = [
             "email", "first_name", "last_name", "phone", "role",
             "password", "password_confirm", "farm_name", "farm_location",
+            "date_of_birth", "nationality", "id_number", "passport_number",
+            "vehicle_type", "vehicle_registration",
             "accept_privacy_policy", "marketing_opt_in",
         ]
 
@@ -34,11 +47,49 @@ class RegisterSerializer(SignupConsentFields, serializers.ModelSerializer):
             raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
         if attrs.get("role") == "farmer" and not attrs.get("farm_name", "").strip():
             raise serializers.ValidationError({"farm_name": "Farm name is required when registering as a farmer."})
+        if attrs.get("role") == UserRole.DRIVER:
+            self._validate_driver(attrs)
         return attrs
+
+    def _validate_driver(self, attrs):
+        errors = {}
+        dob, nationality = attrs.get("date_of_birth"), attrs.get("nationality")
+        id_number = attrs.get("id_number", "").replace(" ", "")
+        passport = attrs.get("passport_number", "").strip()
+        if not dob:
+            errors["date_of_birth"] = "Enter your date of birth."
+        elif age_on(dob) < MINIMUM_DRIVER_AGE:
+            errors["date_of_birth"] = f"Drivers must be {MINIMUM_DRIVER_AGE} or older."
+        if not nationality:
+            errors["nationality"] = "Choose whether you're a South African citizen or a foreign national."
+        elif nationality == Nationality.SA_CITIZEN:
+            try:
+                id_dob = sa_id_date_of_birth(id_number)
+            except ValueError as e:
+                errors["id_number"] = str(e)
+            else:
+                if dob and id_dob != dob:
+                    errors["id_number"] = "This ID number doesn't match the date of birth you entered."
+        elif not passport:
+            errors["passport_number"] = "Enter your passport number."
+        if not attrs.get("vehicle_type", "").strip():
+            errors["vehicle_type"] = "Tell us what vehicle you'll deliver with."
+        if not attrs.get("vehicle_registration", "").strip():
+            errors["vehicle_registration"] = "Enter the vehicle's registration number."
+        if errors:
+            raise serializers.ValidationError(errors)
+        # Keep only the identity number that applies
+        attrs["id_number"] = id_number if nationality == Nationality.SA_CITIZEN else ""
+        attrs["passport_number"] = "" if nationality == Nationality.SA_CITIZEN else passport
 
     def create(self, validated_data):
         farm_name = validated_data.pop("farm_name", "")
         farm_location = validated_data.pop("farm_location", "")
+        driver_fields = {
+            key: validated_data.pop(key, None)
+            for key in ("date_of_birth", "nationality", "id_number", "passport_number",
+                        "vehicle_type", "vehicle_registration")
+        }
         marketing_opt_in = pop_signup_consent(validated_data)
         user = User.objects.create_user(**validated_data)
         record_signup_consent(user, marketing_opt_in)
@@ -47,7 +98,9 @@ class RegisterSerializer(SignupConsentFields, serializers.ModelSerializer):
         elif user.role == "customer":
             BuyerProfile.objects.create(user=user)
         elif user.role == "driver":
-            DriverProfile.objects.create(user=user)
+            DriverProfile.objects.create(
+                user=user, **{k: v.strip() if isinstance(v, str) else v for k, v in driver_fields.items() if v},
+            )
         return user
 
 
@@ -137,3 +190,56 @@ class PasswordResetConfirmSerializer(serializers.Serializer):
 
         attrs["user"] = user
         return attrs
+
+
+class DriverDocumentSerializer(serializers.ModelSerializer):
+    """A driver's own view of one of their documents (the file itself is fetched separately)."""
+    label = serializers.CharField(source="get_doc_type_display", read_only=True)
+
+    class Meta:
+        model = DriverDocument
+        fields = ["doc_type", "label", "original_name", "status", "review_note", "uploaded_at"]
+        read_only_fields = fields
+
+
+class DriverDocumentUploadSerializer(serializers.Serializer):
+    doc_type = serializers.ChoiceField(choices=DocumentType.choices)
+    file = serializers.FileField()
+
+    def validate_file(self, value):
+        if value.content_type not in ALLOWED_DOCUMENT_TYPES:
+            raise serializers.ValidationError("Upload a PDF, or a JPEG, PNG or WebP photo.")
+        if value.size > MAX_DOCUMENT_SIZE:
+            raise serializers.ValidationError("The file must be under 10 MB.")
+        return value
+
+    def validate_doc_type(self, value):
+        profile = self.context["profile"]
+        from .driver_verification import required_documents
+        if value not in required_documents(profile.nationality):
+            raise serializers.ValidationError("This document isn't needed for your application.")
+        return value
+
+
+def document_checklist(profile):
+    """The driver's checklist: every required document, uploaded or not."""
+    by_type = {d.doc_type: d for d in profile.documents.all()}
+    status = profile.verification_status()
+    items = []
+    for doc_type in status["required"]:
+        doc = by_type.get(doc_type)
+        items.append({
+            "doc_type": doc_type,
+            "label": DocumentType(doc_type).label,
+            "hint": DOCUMENT_HINTS[doc_type],
+            "document": DriverDocumentSerializer(doc).data if doc else None,
+        })
+    return {
+        "nationality": profile.nationality,
+        "consent_given": status["consent"],
+        "old_enough": status["old_enough"],
+        "complete": status["complete"],
+        "is_approved": profile.is_approved,
+        "rejection_reason": profile.rejection_reason if profile.rejected_at else "",
+        "items": items,
+    }

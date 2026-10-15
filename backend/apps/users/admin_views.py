@@ -7,12 +7,13 @@ from rest_framework.response import Response
 from .admin_serializers import (
     AdminUserSerializer,
     ApprovalActionSerializer,
+    DriverDocumentReviewSerializer,
     ManagerCreateSerializer,
     PendingDriverSerializer,
     PendingFarmerSerializer,
     StaffSerializer,
 )
-from .models import DriverProfile, FarmerProfile, User, UserRole, UserStatus
+from .models import DocumentStatus, DriverDocument, DriverProfile, FarmerProfile, User, UserRole, UserStatus
 from .permissions import IsAdminUser, IsSuperAdmin, is_super_admin
 
 
@@ -75,7 +76,7 @@ class DriverApprovalViewSet(viewsets.GenericViewSet):
 
     def get_queryset(self):
         visible = ~Q(reviews__status="removed")
-        qs = DriverProfile.objects.select_related("user").annotate(
+        qs = DriverProfile.objects.select_related("user").prefetch_related("documents").annotate(
             average_rating=Avg("reviews__rating", filter=visible),
             rating_count=Count("reviews", filter=visible),
         )
@@ -99,21 +100,96 @@ class DriverApprovalViewSet(viewsets.GenericViewSet):
         serializer.is_valid(raise_exception=True)
 
         if serializer.validated_data["action"] == "approve":
+            # Only a complete application can be approved: 21+, consent given, and every
+            # required document in with none rejected (see driver_verification.py)
+            check = profile.verification_status()
+            if not check["complete"]:
+                problems = []
+                if not check["old_enough"]:
+                    problems.append("the driver isn't 21 or older, or has no date of birth")
+                if not check["consent"]:
+                    problems.append("the driver hasn't agreed to the document check")
+                if check["missing"]:
+                    problems.append(f"{len(check['missing'])} required document(s) not uploaded")
+                if check["rejected"]:
+                    problems.append(f"{len(check['rejected'])} document(s) need a new upload")
+                return Response(
+                    {"error": {"code": "bad_request", "message": "Can't approve yet: " + "; ".join(problems) + "."}},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            now = timezone.now()
+            profile.documents.filter(status=DocumentStatus.SUBMITTED).update(
+                status=DocumentStatus.ACCEPTED, reviewed_by=request.user, reviewed_at=now,
+            )
             profile.is_approved = True
-            profile.approved_at = timezone.now()
+            profile.approved_at = now
             profile.approved_by = request.user
             profile.rejection_reason = ""
+            profile.rejected_at = None
             profile.user.status = UserStatus.ACTIVE
-            profile.save(update_fields=["is_approved", "approved_at", "approved_by", "rejection_reason"])
+            profile.save(update_fields=["is_approved", "approved_at", "approved_by", "rejection_reason", "rejected_at"])
             profile.user.save(update_fields=["status"])
         else:
             profile.is_approved = False
             profile.rejection_reason = serializer.validated_data["reason"]
             profile.approved_by = None
             profile.approved_at = None
-            profile.save(update_fields=["is_approved", "rejection_reason", "approved_by", "approved_at"])
+            # Starts the 30-day clock after which the documents are deleted
+            profile.rejected_at = timezone.now()
+            profile.save(update_fields=["is_approved", "rejection_reason", "approved_by", "approved_at", "rejected_at"])
 
-        return Response(PendingDriverSerializer(profile).data)
+        # Reload: the documents were prefetched before this change
+        return Response(PendingDriverSerializer(self.get_object()).data)
+
+    def _document(self, profile, doc_id):
+        return DriverDocument.objects.filter(driver=profile, pk=doc_id).first()
+
+    @action(detail=True, methods=["get"], url_path=r"documents/(?P<doc_id>\d+)/file")
+    def document_file(self, request, pk=None, doc_id=None):
+        """GET /admin/drivers/<id>/documents/<doc_id>/file/ — view one document (logged)."""
+        from apps.privacy.models import DataAccessAuditLog
+        from config.private_storage import serve_private_file
+
+        profile = self.get_object()
+        doc = self._document(profile, doc_id)
+        if doc is None:
+            return Response(
+                {"error": {"code": "not_found", "message": "Document not found."}}, status=status.HTTP_404_NOT_FOUND,
+            )
+        DataAccessAuditLog.objects.create(
+            user=profile.user, accessed_by=request.user,
+            reason=f"Viewed driver document: {doc.get_doc_type_display()}",
+        )
+        return serve_private_file(doc.file, doc.original_name or f"{doc.doc_type}.pdf", doc.content_type)
+
+    @action(detail=True, methods=["post"], url_path=r"documents/(?P<doc_id>\d+)/review")
+    def document_review(self, request, pk=None, doc_id=None):
+        """POST /admin/drivers/<id>/documents/<doc_id>/review/ — {action: accept|reject, note}."""
+        profile = self.get_object()
+        doc = self._document(profile, doc_id)
+        if doc is None:
+            return Response(
+                {"error": {"code": "not_found", "message": "Document not found."}}, status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = DriverDocumentReviewSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        accepted = serializer.validated_data["action"] == "accept"
+        doc.status = DocumentStatus.ACCEPTED if accepted else DocumentStatus.REJECTED
+        doc.review_note = "" if accepted else serializer.validated_data["note"].strip()
+        doc.reviewed_by = request.user
+        doc.reviewed_at = timezone.now()
+        doc.save(update_fields=["status", "review_note", "reviewed_by", "reviewed_at"])
+        if not accepted:
+            from apps.notifications.models import NotificationCategory
+            from apps.notifications.services.dispatcher import notify
+
+            notify(
+                profile.user, "driver_document_rejected",
+                f"Please upload a new {doc.get_doc_type_display().lower()}: {doc.review_note}",
+                NotificationCategory.ORDER_UPDATES, link="/driver/documents",
+            )
+        # Reload: the documents were prefetched before this change
+        return Response(PendingDriverSerializer(self.get_object()).data)
 
 
 class UserManagementViewSet(
