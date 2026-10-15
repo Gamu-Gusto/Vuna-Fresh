@@ -60,8 +60,9 @@ def make_driver(email):
     return user, profile
 
 
-def make_admin(email):
-    return make_user(email, "admin", is_staff=True)
+def make_admin(email, super_admin=True):
+    """The super admin by default; super_admin=False makes a manager."""
+    return make_user(email, "admin", is_staff=True, is_superuser=super_admin)
 
 
 def make_product(farmer_profile, name="Tomatoes", price="10.00", stock=100):
@@ -578,3 +579,35 @@ class OrderReleaseTests(TestCase):
         self.assertIn(self.order.id, self._farmer_order_ids())
         self.order.transition_status(OrderStatus.PREPARING, changed_by=self.farmer_user)
         self.assertEqual(self.order.status, OrderStatus.PREPARING)
+
+
+class AdminOrderFilterTests(TestCase):
+    """The admin deliveries board asks for orders by status and whether a driver is assigned."""
+
+    def setUp(self):
+        _, buyer_profile, address = make_buyer("customer@test.com")
+        self.admin_user = make_admin("admin@test.com")
+        _, self.driver_profile = make_driver("driver@test.com")
+        make = lambda status, driver=None: Order.objects.create(
+            buyer=buyer_profile, delivery_address=address, status=status, driver=driver,
+            subtotal=Decimal("10.00"), total=Decimal("10.00"),
+        )
+        self.waiting = make(OrderStatus.READY_FOR_PICKUP)
+        self.assigned = make(OrderStatus.READY_FOR_PICKUP, self.driver_profile)
+        self.on_road = make(OrderStatus.OUT_FOR_DELIVERY, self.driver_profile)
+        self.placed = make(OrderStatus.PLACED)
+
+    def ids(self, query, user=None):
+        client = APIClient()
+        client.force_authenticate(user=user or self.admin_user)
+        return {o["id"] for o in client.get(f"/api/v1/orders/{query}").data["results"]}
+
+    def test_filter_by_status_and_driver(self):
+        self.assertEqual(self.ids("?status=ready_for_pickup&has_driver=false"), {self.waiting.id})
+        self.assertEqual(self.ids("?status=ready_for_pickup&has_driver=true"), {self.assigned.id})
+        self.assertEqual(self.ids("?status=ready_for_pickup,out_for_delivery"), {self.waiting.id, self.assigned.id, self.on_road.id})
+        self.assertEqual(len(self.ids("")), 4)
+
+    def test_filters_do_not_widen_other_roles(self):
+        # A driver still only sees their own orders, whatever they ask for
+        self.assertEqual(self.ids("?status=ready_for_pickup&has_driver=false", self.driver_profile.user), {self.assigned.id, self.on_road.id})

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api';
+import AssignDriver, { useApprovedDrivers } from '@/components/AssignDriver';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import OrderStatusBadge from '@/components/OrderStatusBadge';
@@ -56,7 +57,7 @@ export default function AdminOrderDetailPage() {
         )}
       </div>
 
-      {order.status === 'ready_for_pickup' && <AssignDriver order={order} onAssigned={setOrder} />}
+      {order.status === 'ready_for_pickup' && <AssignDriverPanel order={order} onAssigned={setOrder} />}
 
       {/* Items grouped by farm */}
       <div className="bg-white rounded border border-hairline p-5">
@@ -125,53 +126,12 @@ function Detail({ label, value }) {
 }
 
 // Ready-for-pickup orders need a driver before they can go out for delivery.
-function AssignDriver({ order, onAssigned }) {
-  const [drivers, setDrivers] = useState(null);
-  const [driverId, setDriverId] = useState(order.driver ? String(order.driver) : '');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState('');
-
-  useEffect(() => {
-    apiClient.get('/admin/drivers/')
-      .then(list => setDrivers(list.filter(d => d.is_approved)))
-      .catch(() => setError('Could not load drivers.'));
-  }, []);
-
-  async function assign() {
-    setError('');
-    setSaving(true);
-    try {
-      onAssigned(await apiClient.post(`/orders/${order.id}/assign_driver/`, { driver_id: Number(driverId) }));
-    } catch (err) {
-      setError(err.message);
-    } finally {
-      setSaving(false);
-    }
-  }
-
+function AssignDriverPanel({ order, onAssigned }) {
+  const { drivers, error } = useApprovedDrivers();
   return (
     <div className="bg-white rounded border border-hairline p-5 text-sm space-y-3">
       <h2 className="font-semibold text-gray-900">{order.driver ? 'Change driver' : 'Assign a driver'}</h2>
-      {drivers && drivers.length === 0 ? (
-        <p className="text-gray-500">No approved drivers yet. Approve one on the <Link href="/admin/approvals" className="text-brand-green hover:underline">Approvals</Link> page.</p>
-      ) : (
-        <div className="flex flex-wrap gap-2">
-          <select value={driverId} onChange={e => setDriverId(e.target.value)} className="border border-gray-300 rounded-lg px-3 py-1.5 bg-white min-w-56">
-            <option value="">Choose a driver…</option>
-            {(drivers ?? []).map(d => (
-              <option key={d.id} value={d.id}>
-                {d.full_name || d.email}
-                {d.vehicle_type ? ` (${d.vehicle_type})` : ''}
-                {d.rating_count ? ` · ${d.average_rating.toFixed(1)}★ from ${d.rating_count}` : ' · no ratings yet'}
-              </option>
-            ))}
-          </select>
-          <button onClick={assign} disabled={!driverId || saving || String(order.driver) === driverId} className="btn-primary px-4 py-1.5 disabled:opacity-60">
-            {saving ? 'Assigning…' : 'Assign'}
-          </button>
-        </div>
-      )}
-      {error && <p className="text-red-600">{error}</p>}
+      {error ? <p className="text-red-600">{error}</p> : <AssignDriver order={order} drivers={drivers} onAssigned={onAssigned} />}
     </div>
   );
 }

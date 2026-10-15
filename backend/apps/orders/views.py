@@ -111,7 +111,7 @@ class OrderViewSet(
 ):
     """
     POST /api/v1/orders/                      — checkout (customer)
-    GET  /api/v1/orders/                      — list orders (role-filtered)
+    GET  /api/v1/orders/                      — list orders (role-filtered; admin: ?status=a,b&has_driver=)
     GET  /api/v1/orders/<id>/                 — order detail
     POST /api/v1/orders/<id>/update_status/   — advance order status
     """
@@ -141,7 +141,15 @@ class OrderViewSet(
             return qs.filter(items__farmer=user.farmer_profile).released().distinct()
         if user.role == "driver":
             return qs.filter(driver=user.driver_profile)
-        # admin sees all
+
+        # admin sees all, optionally narrowed for the deliveries board:
+        # ?status=ready_for_pickup,out_for_delivery and ?has_driver=true|false
+        statuses = [s for s in self.request.query_params.get("status", "").split(",") if s]
+        if statuses:
+            qs = qs.filter(status__in=statuses)
+        has_driver = self.request.query_params.get("has_driver")
+        if has_driver in ("true", "false"):
+            qs = qs.filter(driver__isnull=has_driver == "false")
         return qs
 
     def get_serializer_class(self):

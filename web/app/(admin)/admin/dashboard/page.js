@@ -6,6 +6,7 @@ import { apiClient } from '@/lib/api';
 import { useAuth } from '@/lib/auth-context';
 import OrderStatusBadge from '@/components/OrderStatusBadge';
 import PaymentStatusBadge from '@/components/PaymentStatusBadge';
+import AssignDriver, { useApprovedDrivers } from '@/components/AssignDriver';
 import {
   DashboardGrid, DashboardError, DashboardLoading, GreetingCard, HeroBanner, Panel,
   RailItem, StatRow, StatTile, WeeklyBars, weeklyTotals,
@@ -37,7 +38,8 @@ export default function AdminDashboard() {
       const since = new Date();
       since.setDate(since.getDate() - 7 * CHART_WEEKS);
       try {
-        const [pendingFarmers, pendingDrivers, proofs, payouts, recent, ...roleCounts] = await Promise.all([
+        const [needsDriver, pendingFarmers, pendingDrivers, proofs, payouts, recent, ...roleCounts] = await Promise.all([
+          apiClient.get('/orders/?status=ready_for_pickup&has_driver=false'),
           apiClient.get('/admin/farmers/?pending=true'),
           apiClient.get('/admin/drivers/?pending=true'),
           apiClient.get('/payments/deposit-proofs/pending/'),
@@ -46,6 +48,8 @@ export default function AdminDashboard() {
           ...['customer', 'farmer', 'driver'].map(role => apiClient.get(`/admin/users/?role=${role}`)),
         ]);
         setData({
+          needsDriver: needsDriver.results ?? [],
+          needsDriverCount: needsDriver.count ?? 0,
           pendingFarmers,
           pendingDrivers,
           proofCount: proofs.count ?? (proofs.results ?? proofs).length,
@@ -64,7 +68,7 @@ export default function AdminDashboard() {
   if (error) return <DashboardError message={error} />;
   if (!data) return <DashboardLoading />;
 
-  const { pendingFarmers, pendingDrivers, proofCount, payouts, orders, orderCount, people } = data;
+  const { needsDriver, needsDriverCount, pendingFarmers, pendingDrivers, proofCount, payouts, orders, orderCount, people } = data;
   const approvals = [
     ...pendingFarmers.map(f => ({ key: `f${f.id}`, name: f.farm_name || f.full_name || f.email, kind: 'Farmer' })),
     ...pendingDrivers.map(d => ({ key: `d${d.id}`, name: d.full_name || d.email, kind: 'Driver' })),
@@ -76,13 +80,19 @@ export default function AdminDashboard() {
     <DashboardGrid
       main={
         <>
-          <AdminHero proofCount={proofCount} approvalCount={approvals.length} readyPayouts={readyPayouts} readyTotal={readyTotal} />
+          <AdminHero
+            canPay={Boolean(user?.is_super_admin)}
+            needsDriver={needsDriver} needsDriverCount={needsDriverCount}
+            proofCount={proofCount} approvalCount={approvals.length} readyPayouts={readyPayouts} readyTotal={readyTotal}
+          />
 
           <StatRow>
+            <StatTile icon="truck" label="Need a driver" value={needsDriverCount} href="/admin/deliveries" tone={needsDriverCount ? 'attention' : 'normal'} />
             <StatTile icon="banknote" label="Payments to verify" value={proofCount} href="/admin/payments" tone={proofCount ? 'attention' : 'normal'} />
             <StatTile icon="check" label="Waiting for approval" value={approvals.length} href="/admin/approvals" tone={approvals.length ? 'attention' : 'normal'} />
-            <StatTile icon="wallet" label="Payouts ready" value={readyPayouts.length} href="/admin/payouts" />
           </StatRow>
+
+          <NeedsDriverPanel initial={needsDriver} total={needsDriverCount} />
 
           <Panel title="Recent orders" action={{ href: '/admin/orders', label: 'See all' }}>
             {orders.length === 0 ? (
@@ -177,7 +187,20 @@ export default function AdminDashboard() {
   );
 }
 
-function AdminHero({ proofCount, approvalCount, readyPayouts, readyTotal }) {
+// Orders waiting for a driver first: the produce is packed and sitting at the farm.
+function AdminHero({ canPay, needsDriver, needsDriverCount, proofCount, approvalCount, readyPayouts, readyTotal }) {
+  if (needsDriverCount > 0) {
+    return (
+      <HeroBanner
+        kicker="Deliveries"
+        title={needsDriverCount === 1 ? `Order #${needsDriver[0].id} needs a driver` : `${needsDriverCount} orders need a driver`}
+        body={needsDriverCount === 1
+          ? "The farm has packed it and it's ready for pickup. Assign a driver and it appears on their dashboard straight away."
+          : "The farms have packed them and they're ready for pickup. Assign drivers and each order appears on its driver's dashboard straight away."}
+        action={{ href: '/admin/deliveries', label: 'Assign drivers' }}
+      />
+    );
+  }
   if (proofCount > 0) {
     return (
       <HeroBanner
@@ -203,8 +226,8 @@ function AdminHero({ proofCount, approvalCount, readyPayouts, readyTotal }) {
       <HeroBanner
         kicker="Farmer payouts"
         title={`R${Math.round(readyTotal).toLocaleString('en-ZA')} ready to pay`}
-        body={`${readyPayouts.length} delivered ${readyPayouts.length === 1 ? 'order is' : 'orders are'} waiting for the farm payment.`}
-        action={{ href: '/admin/payouts', label: 'Pay farmers' }}
+        body={`${readyPayouts.length} delivered ${readyPayouts.length === 1 ? 'order is' : 'orders are'} waiting for the farm payment.${canPay ? '' : ' Only the super admin can pay farmers.'}`}
+        action={{ href: '/admin/payouts', label: canPay ? 'Pay farmers' : 'See payouts' }}
       />
     );
   }
@@ -215,5 +238,44 @@ function AdminHero({ proofCount, approvalCount, readyPayouts, readyTotal }) {
       body="No payments to verify, no applications waiting and no payouts due. New work shows up here first."
       action={{ href: '/admin/orders', label: 'See orders' }}
     />
+  );
+}
+
+// Assign straight from the dashboard; the full board is on the Deliveries page.
+function NeedsDriverPanel({ initial, total }) {
+  const { drivers, error } = useApprovedDrivers();
+  const [orders, setOrders] = useState(initial.slice(0, 3));
+  const [assigned, setAssigned] = useState([]);
+
+  function onAssigned(updated) {
+    setOrders(os => os.filter(o => o.id !== updated.id));
+    setAssigned(a => [...a, updated.id]);
+  }
+
+  return (
+    <Panel title="Needs a driver" action={{ href: '/admin/deliveries', label: 'All deliveries' }}>
+      {error && <p className="text-sm text-ember mb-3">{error}</p>}
+      {orders.length === 0 ? (
+        <p className="rounded-2xl bg-brand-bg px-5 py-6 text-center text-sm text-gray-600">
+          {assigned.length
+            ? `Assigned ${assigned.length === 1 ? `order #${assigned[0]}` : `${assigned.length} orders`}. ${total > assigned.length ? 'More are waiting on the Deliveries page.' : 'Nothing else is waiting.'}`
+            : 'No packed orders are waiting. Orders show here once a farm marks them ready for pickup.'}
+        </p>
+      ) : (
+        <ul className="divide-y divide-[#EEF1EC] -my-2">
+          {orders.map(order => (
+            <li key={order.id} className="py-3 grid gap-3 md:grid-cols-[1fr_minmax(0,22rem)] md:items-center">
+              <div className="min-w-0">
+                <Link href={`/admin/orders/${order.id}`} className="font-semibold text-navy hover:text-brand-green tabular-nums">Order #{order.id}</Link>
+                <p className="text-sm text-gray-600 truncate">
+                  Collect from {[...new Set(order.items.map(i => i.farm_name))].join(', ')}
+                </p>
+              </div>
+              <AssignDriver order={order} drivers={drivers} onAssigned={onAssigned} compact />
+            </li>
+          ))}
+        </ul>
+      )}
+    </Panel>
   );
 }

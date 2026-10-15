@@ -14,6 +14,7 @@ const SECTIONS = [
     items: [
       { href: '/admin/dashboard', label: 'Dashboard', icon: 'home' },
       { href: '/admin/orders', label: 'Orders', icon: 'basket' },
+      { href: '/admin/deliveries', label: 'Deliveries', icon: 'truck' },
     ],
   },
   {
@@ -34,6 +35,16 @@ const SECTIONS = [
     ],
   },
 ];
+
+// Only the super admin manages the admin team
+const TEAM_ITEM = { href: '/admin/team', label: 'Team', icon: 'users' };
+
+function sectionsFor(user) {
+  if (!user?.is_super_admin) return SECTIONS;
+  return SECTIONS.map(section => (
+    section.label === 'People' ? { ...section, items: [...section.items, TEAM_ITEM] } : section
+  ));
+}
 
 const SHORTCUTS = [
   { href: '/admin/notifications', label: 'Notifications', icon: 'bell' },
@@ -77,12 +88,12 @@ export default function AdminLayout({ children }) {
 
   return (
     <DashboardShell
-      sections={SECTIONS}
+      sections={sectionsFor(user)}
       shortcuts={SHORTCUTS}
       notificationsHref="/admin/notifications"
       supportHref="/admin/support"
       loginHref="/admin/login"
-      roleLabel="Admin"
+      roleLabel={user.is_super_admin ? 'Super admin' : 'Manager'}
     >
       {children}
     </DashboardShell>
