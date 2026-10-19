@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from django.contrib.auth.password_validation import validate_password
 from django.db import transaction
 from rest_framework import serializers
@@ -102,7 +104,7 @@ class BusinessBuyerDetailsSerializer(serializers.ModelSerializer):
         model = BusinessBuyerDetails
         fields = [
             "id", "email", "full_name", "business_name", "business_type",
-            "registration_number", "billing_address", "credit_terms", "credit_limit",
+            "registration_number", "billing_address", "credit_terms", "credit_limit", "commission_rate",
             "approval_status", "rejection_reason", "approved_at", "created_at",
         ]
         read_only_fields = fields
@@ -115,6 +117,11 @@ class BusinessApprovalActionSerializer(serializers.Serializer):
     for a rejected application."""
     action = serializers.ChoiceField(choices=["approve", "suspend"])
     reason = serializers.CharField(required=False, allow_blank=True)
+    # Optional on approval: an agreed commission for this account (5-8%)
+    commission_rate = serializers.DecimalField(
+        max_digits=4, decimal_places=2, required=False, allow_null=True,
+        min_value=Decimal("5.00"), max_value=Decimal("8.00"),
+    )
 
     def validate(self, attrs):
         if attrs["action"] == "suspend" and not attrs.get("reason", "").strip():

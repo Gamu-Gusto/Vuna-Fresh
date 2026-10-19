@@ -69,17 +69,19 @@ class CartViewSet(viewsets.GenericViewSet):
         product = serializer._product
         quantity = serializer.validated_data["quantity"]
         unit_price = serializer._unit_price
+        surplus_listing = serializer._surplus_listing
 
         item, created = CartItem.objects.get_or_create(
             cart=cart,
             product=product,
-            defaults={"price_at_add": unit_price, "quantity": quantity},
+            defaults={"price_at_add": unit_price, "quantity": quantity, "surplus_listing": surplus_listing},
         )
         if not created:
             # Product already in cart — update quantity and re-snapshot price
             item.quantity = quantity
             item.price_at_add = unit_price
-            item.save(update_fields=["quantity", "price_at_add"])
+            item.surplus_listing = surplus_listing
+            item.save(update_fields=["quantity", "price_at_add", "surplus_listing"])
 
         return Response(CartItemSerializer(item).data, status=status.HTTP_200_OK)
 

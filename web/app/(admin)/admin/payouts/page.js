@@ -41,6 +41,8 @@ export default function AdminPayoutsPage() {
 
   const ready = payouts.filter(p => p.ready_to_pay);
   const total = ready.reduce((s, p) => s + Number(p.net_amount), 0);
+  // Vuna Fresh's commission on those orders: kept, not paid out
+  const kept = ready.reduce((s, p) => s + Number(p.commission_amount), 0);
   const waiting = payouts.filter(p => p.status === 'pending' && !p.ready_to_pay).length;
 
   return (
@@ -72,6 +74,7 @@ export default function AdminPayoutsPage() {
           {status === 'pending' && (
             <p className="text-sm text-gray-600">
               {canPay ? 'Ready to pay now' : 'Due now'}: <span className="font-mono font-semibold">R{total.toFixed(2)}</span>
+              {kept > 0 && <span className="text-gray-500"> · Vuna Fresh keeps <span className="font-mono">R{kept.toFixed(2)}</span> commission</span>}
               {waiting > 0 && <span className="text-gray-400"> · {waiting} awaiting delivery</span>}
             </p>
           )}
@@ -82,7 +85,7 @@ export default function AdminPayoutsPage() {
                   <th className="px-4 py-3">Farm</th>
                   <th className="px-4 py-3">Order</th>
                   <th className="px-4 py-3">Gross</th>
-                  <th className="px-4 py-3">Commission</th>
+                  <th className="px-4 py-3">Vuna Fresh keeps</th>
                   <th className="px-4 py-3">Pay farm</th>
                   <th className="px-4 py-3"></th>
                 </tr>

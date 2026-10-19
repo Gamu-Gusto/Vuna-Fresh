@@ -1,9 +1,15 @@
 from decimal import Decimal
+
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from .minimums import minimum_order_check
 from .models import Cart, CartItem, Invoice, InvoiceStatus, Order, OrderItem, OrderStatus, OrderStatusHistory
 
+
+def cart_subtotal(cart):
+    """Value of the produce in the cart (delivery isn't counted towards the minimum)."""
+    return sum((item.price_at_add * item.quantity for item in cart.items.all()), Decimal("0.00"))
 
 class CartItemSerializer(serializers.ModelSerializer):
     product_name = serializers.CharField(source="product.name", read_only=True)
@@ -52,6 +58,7 @@ class CartItemAddSerializer(serializers.Serializer):
         surplus_listing_id = attrs.get("surplus_listing_id")
 
         self._unit_price = product.price if product else None
+        self._surplus_listing = None
 
         if surplus_listing_id is not None:
             try:
@@ -69,6 +76,7 @@ class CartItemAddSerializer(serializers.Serializer):
                     {"quantity": f"Only {listing.quantity_available} units available at surplus price."}
                 )
             self._unit_price = listing.effective_price
+            self._surplus_listing = listing
         elif product and quantity > product.stock_quantity:
             raise serializers.ValidationError(
                 {"quantity": f"Only {product.stock_quantity} units available."}
@@ -94,13 +102,19 @@ class CartItemUpdateSerializer(serializers.ModelSerializer):
 class CartSerializer(serializers.ModelSerializer):
     items = CartItemSerializer(many=True, read_only=True)
     cart_total = serializers.SerializerMethodField()
+    # {"minimum": "300.00", "shortfall": "50.00", "kind": "household", "message": "..."}
+    minimum_order = serializers.SerializerMethodField()
 
     class Meta:
         model = Cart
-        fields = ["id", "status", "items", "cart_total", "created_at", "updated_at"]
+        fields = ["id", "status", "items", "cart_total", "minimum_order", "created_at", "updated_at"]
 
     def get_cart_total(self, obj):
-        return sum(item.price_at_add * item.quantity for item in obj.items.all())
+        return cart_subtotal(obj)
+
+    def get_minimum_order(self, obj):
+        check = minimum_order_check(obj.buyer, cart_subtotal(obj))
+        return {**check, "minimum": str(check["minimum"]), "shortfall": str(check["shortfall"])}
 
 
 # ── Order serializers ─────────────────────────────────────────────────────────
@@ -224,6 +238,9 @@ class CheckoutSerializer(serializers.Serializer):
             raise serializers.ValidationError("You have no active cart.")
         if not cart.items.exists():
             raise serializers.ValidationError("Your cart is empty.")
+        check = minimum_order_check(buyer, cart_subtotal(cart))
+        if check["shortfall"] > 0:
+            raise serializers.ValidationError(check["message"])
         self._cart = cart
         return attrs
 
@@ -244,6 +261,7 @@ class CheckoutSerializer(serializers.Serializer):
                 "farmer": cart_item.product.farmer,
                 "quantity": cart_item.quantity,
                 "price_at_purchase": cart_item.price_at_add,
+                "surplus_listing": cart_item.surplus_listing,
             })
 
         delivery_fee = Decimal("0.00")

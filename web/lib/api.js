@@ -152,6 +152,12 @@ async function request(path, options = {}, _isRetry = false) {
   return res.json();
 }
 
+/** The server's reason, e.g. "The minimum household order is R300.00…", not just "Invalid input." */
+export function apiErrorText(err) {
+  if (!err?.detail || typeof err.detail !== 'object') return err?.message ?? 'Something went wrong.';
+  return Object.values(err.detail).flat().join(' ');
+}
+
 export class ApiError extends Error {
   // detail: per-field validation messages from DRF, e.g. { amount_received: ["..."] }
   constructor(status, message, detail = null) {

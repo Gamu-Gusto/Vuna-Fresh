@@ -64,6 +64,10 @@ class CartItem(models.Model):
     product = models.ForeignKey("products.Product", on_delete=models.CASCADE, related_name="+")
     quantity = models.PositiveIntegerField(default=1)
     price_at_add = models.DecimalField(max_digits=10, decimal_places=2)
+    # Set when added at a surplus listing's discounted price (lower commission)
+    surplus_listing = models.ForeignKey(
+        "products.SurplusListing", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
 
     class Meta:
         db_table = "cart_items"
@@ -221,6 +225,13 @@ class OrderItem(models.Model):
     )
     quantity = models.PositiveIntegerField()
     price_at_purchase = models.DecimalField(max_digits=10, decimal_places=2)
+    # Bought at a surplus listing's discounted price
+    surplus_listing = models.ForeignKey(
+        "products.SurplusListing", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
+    # Vuna Fresh's commission on this item, recorded when ordered (see
+    # apps.payments.services.commission); the farmer is paid the rest
+    commission_rate = models.DecimalField(max_digits=5, decimal_places=2, null=True, blank=True)
 
     class Meta:
         db_table = "order_items"
@@ -231,6 +242,12 @@ class OrderItem(models.Model):
     @property
     def line_total(self):
         return self.price_at_purchase * self.quantity
+
+    def save(self, *args, **kwargs):
+        if self.commission_rate is None:
+            from apps.payments.services.commission import commission_rate_for
+            self.commission_rate = commission_rate_for(self.order.buyer, is_surplus=self.surplus_listing_id is not None)
+        super().save(*args, **kwargs)
 
 
 class OrderStatusHistory(models.Model):

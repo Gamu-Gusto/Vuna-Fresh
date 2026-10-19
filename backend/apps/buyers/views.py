@@ -62,13 +62,15 @@ class BusinessBuyerApprovalViewSet(viewsets.GenericViewSet):
             details.approved_by = request.user
             details.approved_at = timezone.now()
             details.rejection_reason = ""
+            if "commission_rate" in serializer.validated_data:
+                details.commission_rate = serializer.validated_data["commission_rate"]
         else:
             details.approval_status = BusinessApprovalStatus.SUSPENDED
             details.rejection_reason = serializer.validated_data["reason"]
             details.approved_by = None
             details.approved_at = None
 
-        details.save(update_fields=["approval_status", "rejection_reason", "approved_by", "approved_at"])
+        details.save(update_fields=["approval_status", "rejection_reason", "approved_by", "approved_at", "commission_rate"])
         return Response(BusinessBuyerDetailsSerializer(details).data)
 
 

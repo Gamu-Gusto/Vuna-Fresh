@@ -1,6 +1,7 @@
 import logging
 import os
 import uuid
+from decimal import Decimal
 
 from django.conf import settings
 from django.db import models
@@ -171,12 +172,22 @@ class DirectDepositProof(models.Model):
 
 class CommissionSettings(models.Model):
     """
-    One active commission rate at a time (not per-farmer/per-category). Rows
-    are append-only and effective-dated rather than a strict single row, so a
-    rate change is auditable — get_active() always resolves to exactly one.
+    The commission Vuna Fresh keeps from each sale; the farmer is paid the rest.
+    One active set of rates at a time. Rows are append-only and effective-dated,
+    so a rate change is auditable — get_active() always resolves to exactly one.
+    See services/commission.py for which rate applies to which sale.
     """
     commission_rate = models.DecimalField(
-        max_digits=5, decimal_places=2, help_text="Percentage, e.g. 10.00 for 10%.",
+        max_digits=5, decimal_places=2, default=Decimal("10.00"),
+        help_text="Household orders. Percentage, e.g. 10.00 for 10%.",
+    )
+    business_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("8.00"),
+        help_text="Business orders, unless the business account has its own rate (5-8%).",
+    )
+    surplus_rate = models.DecimalField(
+        max_digits=5, decimal_places=2, default=Decimal("5.00"),
+        help_text="Discounted surplus produce, for any buyer.",
     )
     effective_from = models.DateTimeField()
     created_at = models.DateTimeField(auto_now_add=True)

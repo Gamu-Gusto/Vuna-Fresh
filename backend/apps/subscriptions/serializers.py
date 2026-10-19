@@ -49,12 +49,21 @@ class SubscriptionCreateSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        from apps.orders.minimums import minimum_order_check
+
         product = attrs["product"]
         quantity = attrs["quantity"]
         if quantity > product.stock_quantity:
             raise serializers.ValidationError(
                 {"quantity": f"Only {product.stock_quantity} units available."}
             )
+        # Each delivery is its own order, so it has to meet the minimum order
+        check = minimum_order_check(self.context["buyer"], product.price * quantity)
+        if check["shortfall"] > 0:
+            raise serializers.ValidationError({"quantity": (
+                f"Each delivery must be at least R{check['minimum']:.2f} of produce. "
+                f"This one is R{product.price * quantity:.2f}: increase the quantity."
+            )})
         return attrs
 
     def create(self, validated_data):

@@ -206,5 +206,5 @@ class FarmerPayoutSerializer(serializers.ModelSerializer):
 class CommissionSettingsSerializer(serializers.ModelSerializer):
     class Meta:
         model = CommissionSettings
-        fields = ["id", "commission_rate", "effective_from", "created_at"]
+        fields = ["id", "commission_rate", "business_rate", "surplus_rate", "effective_from", "created_at"]
         read_only_fields = ["id", "created_at"]

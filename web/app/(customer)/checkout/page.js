@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/auth-context';
 import { useCart } from '@/lib/cart-context';
-import { apiClient } from '@/lib/api';
+import { apiClient, apiErrorText } from '@/lib/api';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Spinner from '@/components/Spinner';
@@ -67,7 +67,7 @@ export default function CheckoutPage() {
       // else pays by EFT next, using the bank details on the pay page.
       router.push(order.payment?.status === 'credit' ? `/orders?placed=${order.id}` : `/orders/${order.id}/pay`);
     } catch (err) {
-      setError(err.message);
+      setError(apiErrorText(err));
     } finally {
       setPlacing(false);
     }

@@ -16,6 +16,7 @@ const BUSINESS_CONFIG = {
 export default function ApprovalsPage() {
   const [farmers, setFarmers] = useState([]);
   const [drivers, setDrivers] = useState([]);
+  const [businessRates, setBusinessRates] = useState({}); // business id -> agreed commission
   const [businesses, setBusinesses] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -55,11 +56,11 @@ export default function ApprovalsPage() {
     else setBusinesses(bs => bs.filter(b => b.id !== id));
   }
 
-  async function handleApprove(id, type) {
+  async function handleApprove(id, type, extra = {}) {
     setActionError('');
     setActionLoading(true);
     try {
-      await apiClient.post(reviewUrl(id, type), { action: 'approve' });
+      await apiClient.post(reviewUrl(id, type), { action: 'approve', ...extra });
       removeFromQueue(id, type);
     } catch (err) {
       setActionError(err.message);
@@ -186,7 +187,23 @@ export default function ApprovalsPage() {
                 rejectLabel={BUSINESS_CONFIG.rejectLabel}
                 rejecting={rejectState?.id === b.id && rejectState?.type === 'business'}
                 rejectReason={rejectState?.id === b.id ? rejectState.reason : ''}
-                onApprove={() => handleApprove(b.id, 'business')}
+                onApprove={() => handleApprove(b.id, 'business', businessRates[b.id] ? { commission_rate: businessRates[b.id] } : {})}
+                extra={
+                  <label className="mt-3 flex flex-wrap items-center gap-2 text-sm text-gray-700">
+                    Commission
+                    <select
+                      value={businessRates[b.id] ?? ''}
+                      onChange={e => setBusinessRates(r => ({ ...r, [b.id]: e.target.value }))}
+                      className="border border-gray-300 rounded-lg px-2 py-1 bg-white"
+                    >
+                      <option value="">Standard business rate (8%)</option>
+                      {['8.00', '7.50', '7.00', '6.50', '6.00', '5.50', '5.00'].map(v => (
+                        <option key={v} value={v}>{Number(v)}% agreed rate</option>
+                      ))}
+                    </select>
+                    <span className="text-xs text-gray-500">Agreed rates are 5–8%. Household orders pay 10%, surplus 5%.</span>
+                  </label>
+                }
                 onRejectClick={() => setRejectState({ id: b.id, type: 'business', reason: '' })}
                 onRejectReasonChange={reason => setRejectState(s => ({ ...s, reason }))}
                 onRejectSubmit={handleRejectSubmit}

@@ -183,6 +183,10 @@ AWS_S3_FILE_OVERWRITE = False
 AWS_S3_CUSTOM_DOMAIN = _storage_env("PUBLIC_DOMAIN") or None
 AWS_QUERYSTRING_AUTH = AWS_S3_CUSTOM_DOMAIN is None
 
+# Minimum order value (rand, produce only), so each delivery covers its cost
+MINIMUM_ORDER_HOUSEHOLD = env.int("MINIMUM_ORDER_HOUSEHOLD", default=300)
+MINIMUM_ORDER_BUSINESS = env.int("MINIMUM_ORDER_BUSINESS", default=900)
+
 # Sensitive uploads (proofs of payment, driver documents) go to a separate
 # PRIVATE bucket on the same account, never the public one: see
 # config/private_storage.py. Without it they're kept on local disk, unserved.

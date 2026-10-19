@@ -1,4 +1,7 @@
+from decimal import Decimal
+
 from django.conf import settings
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 
@@ -47,6 +50,13 @@ class BusinessBuyerDetails(models.Model):
     )
     credit_terms = models.CharField(max_length=10, choices=CreditTerms.choices, default=CreditTerms.PREPAID)
     credit_limit = models.DecimalField(max_digits=12, decimal_places=2, null=True, blank=True)
+    # Agreed commission for this account; empty means the standard business rate
+    # (see apps.payments.services.commission)
+    commission_rate = models.DecimalField(
+        max_digits=4, decimal_places=2, null=True, blank=True,
+        validators=[MinValueValidator(Decimal("5.00")), MaxValueValidator(Decimal("8.00"))],
+        help_text="Percentage between 5 and 8. Leave empty for the standard business rate.",
+    )
     approval_status = models.CharField(
         max_length=10, choices=BusinessApprovalStatus.choices, default=BusinessApprovalStatus.PENDING
     )

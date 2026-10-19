@@ -26,6 +26,9 @@ export default function CartPage() {
 
   const items = cart?.items ?? [];
   const total = cart?.cart_total ?? 0;
+  // Every delivery has a minimum (R300 household, R900 business) of produce
+  const minimum = cart?.minimum_order;
+  const shortfall = Number(minimum?.shortfall ?? 0);
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -47,9 +50,27 @@ export default function CartPage() {
             <span className="text-xl font-bold text-brand-green font-mono">R{Number(total).toFixed(2)}</span>
           </div>
 
+          {minimum && shortfall > 0 && (
+            <div className="mt-4 rounded border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900" role="status">
+              <p>
+                {minimum.kind === 'business' ? 'The minimum business order is' : 'The minimum order is'}{' '}
+                <span className="font-semibold font-mono">R{Number(minimum.minimum).toFixed(2)}</span> of produce.
+                Add <span className="font-semibold font-mono">R{shortfall.toFixed(2)}</span> more to check out.
+              </p>
+              <div className="mt-2 h-2 rounded-full bg-amber-100 overflow-hidden" aria-hidden="true">
+                <div
+                  className="h-full bg-amber-500 rounded-full"
+                  style={{ width: `${Math.min(100, (Number(total) / Number(minimum.minimum)) * 100)}%` }}
+                />
+              </div>
+              <Link href="/products" className="mt-2 inline-block font-medium text-brand-green hover:underline">Keep shopping</Link>
+            </div>
+          )}
+
           <button
             onClick={() => router.push('/checkout')}
-            className="mt-4 w-full btn-primary py-3"
+            disabled={shortfall > 0}
+            className="mt-4 w-full btn-primary py-3 disabled:opacity-60"
           >
             Proceed to checkout
           </button>

@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { apiClient } from '@/lib/api';
+import { apiClient, apiErrorText } from '@/lib/api';
 
 const FREQUENCIES = [
   { value: 'weekly', label: 'Every week' },
@@ -38,7 +38,7 @@ export default function SubscribeForm({ product, quantity }) {
       });
       setDone(true);
     } catch (err) {
-      setError(err.message);
+      setError(apiErrorText(err));
     } finally {
       setSaving(false);
     }
