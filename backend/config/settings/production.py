@@ -35,3 +35,6 @@ if SERVE_MEDIA_FROM_DISK:
     MEDIA_ROOT = BASE_DIR / "media"  # noqa: F405
 else:
     DEFAULT_FILE_STORAGE = "storages.backends.s3boto3.S3Boto3Storage"
+
+# Prints a warning in the build log if file storage isn't set up (see config/checks.py)
+import config.checks  # noqa: E402, F401
